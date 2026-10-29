@@ -47,21 +47,21 @@
     <Reference Include="WindowsBase" />
     <Reference Include="System.Xaml" />
     <Reference Include="Microsoft.CSharp" />
-    <!-- SOLIDWORKS interop references - adjust path if needed -->
+    <!-- SOLIDWORKS interop references from verified installation path -->
     <Reference Include="SolidWorks.Interop.sldworks">
       <HintPath>$(SWInteropPath)\SolidWorks.Interop.sldworks.dll</HintPath>
-      <EmbedInteropTypes>false</EmbedInteropTypes>
-      <Private>false</Private>
+      <EmbedInteropTypes>False</EmbedInteropTypes>
+      <Private>True</Private>
     </Reference>
     <Reference Include="SolidWorks.Interop.swconst">
       <HintPath>$(SWInteropPath)\SolidWorks.Interop.swconst.dll</HintPath>
-      <EmbedInteropTypes>false</EmbedInteropTypes>
-      <Private>false</Private>
+      <EmbedInteropTypes>False</EmbedInteropTypes>
+      <Private>True</Private>
     </Reference>
     <Reference Include="SolidWorks.Interop.swpublished">
       <HintPath>$(SWInteropPath)\SolidWorks.Interop.swpublished.dll</HintPath>
-      <EmbedInteropTypes>false</EmbedInteropTypes>
-      <Private>false</Private>
+      <EmbedInteropTypes>False</EmbedInteropTypes>
+      <Private>True</Private>
     </Reference>
   </ItemGroup>
   <ItemGroup>

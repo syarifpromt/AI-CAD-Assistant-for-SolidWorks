@@ -137,4 +137,32 @@
      - Pengujian sanitasi redaksi API key pada `LoggingService`.
    - **Hasil Akhir Test**: 44/44 unit test lolos (100% passed, 0 failed, waktu eksekusi: 220 ms).
 
+---
+
+## Tahap 8: Resolusi Dependensi COM Interop SOLIDWORKS & Validasi Loadability RegAsm
+
+1. **Analisis Kegagalan Registrasi COM (`RegAsm error RA0000`)**:
+   - Gejala: `Could not load file or assembly 'SolidWorks.Interop.swpublished, Version=33.1.1.1, Culture=neutral, PublicKeyToken=89a97bdc5284e6d8' or one of its dependencies.`
+   - Akar masalah:
+     - `AICADAssistant.AddIn.csproj` sebelumnya dikonfigurasi dengan `<Private>false</Private>` (Copy Local = False) untuk referensi interop SOLIDWORKS.
+     - SOLIDWORKS tidak menginstal DLL interop ke GAC (*Global Assembly Cache*). Interop DLLs berada di `C:\Program Files\SOLIDWORKS Corp\SOLIDWORKS\api\redist\`.
+     - Saat utilitas pendaftaran COM (`RegAsm.exe`) dijalankan di luar SOLIDWORKS pada assembly `AICADAssistant.AddIn.dll`, .NET assembly loader tidak dapat menemukan `SolidWorks.Interop.swpublished.dll` di folder output (`bin\Debug\`) maupun di GAC, sehingga memicu error RA0000.
+2. **Perbaikan Referensi Proyek (`AICADAssistant.AddIn.csproj`)**:
+   - Memperbarui ketiga referensi interop SOLIDWORKS:
+     - `SolidWorks.Interop.sldworks` (Version 33.1.1.1 / SOLIDWORKS 2025 SP1)
+     - `SolidWorks.Interop.swconst` (Version 33.1.1.1)
+     - `SolidWorks.Interop.swpublished` (Version 33.1.1.1)
+   - Mengatur `<Private>True</Private>` agar MSBuild secara deterministik menyalin ketiga DLL interop tersebut ke direktori output (`bin\Debug\` dan `bin\Release\`).
+   - Mempertahankan `<EmbedInteropTypes>False</EmbedInteropTypes>` sesuai panduan resmi SOLIDWORKS API (mencegah inkonsistensi identitas antarmuka COM `ISwAddin`).
+3. **Penyempurnaan Skrip Registrasi (`scripts/register_addin.ps1`)**:
+   - Menambahkan mekanisme verifikasi pra-registrasi: sebelum `RegAsm.exe` dipanggil, skrip memeriksa keberadaan ketiga DLL interop di direktori output add-in.
+   - Menyediakan fallback penyalinan otomatis dari lokasi redist instalasi SOLIDWORKS (`C:\Program Files\SOLIDWORKS Corp\SOLIDWORKS\api\redist`) jika berkas belum ada di direktori build.
+   - Membatalkan proses dengan pesan error deskriptif jika dependensi tidak ditemukan di lokasi mana pun, mencegah eksekusi RegAsm dalam kondisi dependensi rusak.
+4. **Verifikasi & Pengujian Loadability**:
+   - **Kompilasi MSBuild**: Berhasil 100% (0 error). Ketiga DLL interop kini tersalin lengkap di `bin\Debug\`.
+   - **Unit Test Suite**: 44/44 unit test lolos (100% passed, 0 error).
+   - **Pemeriksaan Refleksi .NET**: `Assembly.LoadFrom` berhasil memuat tipe `AICADAssistant.AddIn.SwAddIn`, antarmuka `ISwAddin`, GUID `{a1b2c3d4-e5f6-7890-abcd-ef1234567890}`, dan `ComVisible = True`.
+   - **Pengujian Loadability RegAsm (Dry-run)**: Pengujian menggunakan `RegAsm.exe /regfile` berhasil dieksekusi dengan **ExitCode 0 (Sukses)** tanpa error RA0000, memverifikasi bahwa utilitas COM loader dapat memuat seluruh dependensi tanpa perlu mengubah Windows Registry.
+
+
 
