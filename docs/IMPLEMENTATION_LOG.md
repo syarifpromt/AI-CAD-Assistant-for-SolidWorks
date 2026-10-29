@@ -216,6 +216,34 @@
    - **Unit Tests**: 44/44 lolos (100% passed).
    - **Validasi Sintaks Skrip**: Seluruh skrip PowerShell di `scripts/` lolos pemeriksaan AST Parser (0 Error).
 
+---
+
+## Tahap 11: Resolusi InvalidCastException pada ConnectToSW (ClassInterfaceType.AutoDispatch & Taskpane DisplayWindowFromHandlex64)
+
+1. **Analisis Error Runtime**:
+   - Gejala: Saat kotak centang add-in dicentang di *Tools -> Add-Ins*, muncul dialog `Gagal menghubungkan AI CAD Assistant: Specified cast is not valid`.
+   - Jejak log faktual di `%APPDATA%\AICADAssistant\addin.log`:
+     `[2026-10-29 21:03:23] CheckSolidWorksVersion: Revision=33.1.1, Estimated Year=2025`
+     `[2026-10-29 21:03:23] ConnectToSW ERROR: Specified cast is not valid.`
+   - Bukti: Casting parameter `ThisSW` ke `ISldWorks` berhasil sempurna dan pemanggilan `CheckSolidWorksVersion()` menghasilkan nilai `true`. Kegagalan terjadi persis pada baris berikutnya: `_swApp.SetAddinCallbackInfo2(0, this, cookie)`.
+2. **Akar Masalah yang Terverifikasi**:
+   - **Ketiadaan Implementasi IDispatch pada SwAddIn:**
+     Parameter kedua pada `SetAddinCallbackInfo2` didefinisikan dengan atribut marshaling `[MarshalAs(UnmanagedType.IDispatch)] object AddinCallbacks`.
+     Kelas `SwAddIn` sebelumnya disetel dengan `[ClassInterface(ClassInterfaceType.None)]` dan hanya mengimplementasikan antarmuka `ISwAddin` (`InterfaceIsIUnknown`).
+     Akibatnya, wrapper COM (`CCW`) tidak menyediakan antarmuka `IDispatch`. Saat runtime .NET mencoba melakukan marshaling pointer `this` ke `IDispatch`, pemanggilan internal `QueryInterface(IID_IDispatch)` menghasilkan `E_NOINTERFACE` (0x80004002), yang diangkat oleh CLR sebagai `System.InvalidCastException: Specified cast is not valid`.
+   - **Metode Penyematan Task Pane yang Keliru:**
+     Pada metode `AddTaskPane()`, implementasi lama memanggil `_taskpaneView.AddControl(hostForm.Handle.ToString(), ADDIN_TITLE)` yang mengharapkan ActiveX ProgID/CLSID. Di API SOLIDWORKS 64-bit, metode resmi untuk menyematkan kontrol Windows Forms/WPF ke dalam task pane adalah `_taskpaneView.DisplayWindowFromHandlex64(handle.ToInt64())`.
+3. **Perbaikan Kode (`src/AICADAssistant.AddIn/AddInEntryPoint.cs`)**:
+   - Mengubah deklarasi kelas menjadi `[ClassInterface(ClassInterfaceType.AutoDispatch)]`, sehingga CCW secara otomatis menyediakan antarmuka `IDispatch` yang dibutuhkan oleh `SetAddinCallbackInfo2`.
+   - Mengirim argumen `ModuleHandle` sebagai Int64 `0L` secara eksplisit dan menambahkan blok fallback ke `SetAddinCallbackInfo` legacy jika terjadi anomali API.
+   - Memperbaiki `AddTaskPane()` agar menggunakan `_taskpaneView.DisplayWindowFromHandlex64(handle.ToInt64())`.
+   - Menambahkan instrumentasi logging bertahap (`[Stage 1/6]` hingga `[Stage 6/6]`) serta pencatatan stack trace lengkap (`ex.ToString()`) yang otomatis ditulis ke `%APPDATA%\AICADAssistant\addin.log` dan `%LOCALAPPDATA%\AICADAssistant\logs\addin.log`.
+4. **Verifikasi**:
+   - **Kompilasi MSBuild**: 100% Berhasil (0 Error).
+   - **Unit Tests**: 44/44 lolos (100% passed).
+   - **Pemeriksaan Refleksi**: `ClassInterfaceType` terverifikasi `AutoDispatch` dan antarmuka `ISwAddin` terverifikasi utuh.
+
+
 
 
 

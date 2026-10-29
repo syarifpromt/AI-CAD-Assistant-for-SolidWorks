@@ -13,7 +13,7 @@ namespace AICADAssistant.AddIn
 {
     [ComVisible(true)]
     [Guid("a1b2c3d4-e5f6-7890-abcd-ef1234567890")]
-    [ClassInterface(ClassInterfaceType.None)]
+    [ClassInterface(ClassInterfaceType.AutoDispatch)]
     public class SwAddIn : ISwAddin
     {
         private const string ADDIN_GUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
@@ -122,8 +122,17 @@ namespace AICADAssistant.AddIn
         {
             try
             {
+                LogMessage("[Stage 1/6] ConnectToSW dimulai. Cookie=" + cookie);
+                if (ThisSW == null)
+                {
+                    LogMessage("[Stage 1/6] ERROR: Parameter ThisSW bernilai null!");
+                    return false;
+                }
+                LogMessage(string.Format("[Stage 1/6] Tipe objek ThisSW runtime: {0}", ThisSW.GetType().FullName));
+
                 _swApp = (ISldWorks)ThisSW;
                 _addinCookie = cookie;
+                LogMessage("[Stage 2/6] Referensi ISldWorks berhasil diperoleh.");
 
                 // Check SOLIDWORKS version
                 if (!CheckSolidWorksVersion())
@@ -136,7 +145,27 @@ namespace AICADAssistant.AddIn
                 }
 
                 // Setup add-in registration callback
-                _swApp.SetAddinCallbackInfo2(0, this, cookie);
+                LogMessage("[Stage 3/6] Mengatur callback addin via SetAddinCallbackInfo2...");
+                try
+                {
+                    bool cbResult = _swApp.SetAddinCallbackInfo2(0L, this, cookie);
+                    LogMessage(string.Format("[Stage 3/6] SetAddinCallbackInfo2 berhasil. Return value: {0}", cbResult));
+                }
+                catch (Exception cbEx)
+                {
+                    LogMessage(string.Format("[Stage 3/6] SetAddinCallbackInfo2 Exception: {0}\nStack trace: {1}", cbEx.ToString(), cbEx.StackTrace));
+                    try
+                    {
+                        LogMessage("[Stage 3/6] Mencoba fallback SetAddinCallbackInfo legacy...");
+                        bool cbLegacy = _swApp.SetAddinCallbackInfo(0, this, cookie);
+                        LogMessage(string.Format("[Stage 3/6] Fallback SetAddinCallbackInfo return value: {0}", cbLegacy));
+                    }
+                    catch (Exception legEx)
+                    {
+                        LogMessage(string.Format("[Stage 3/6] Fallback SetAddinCallbackInfo gagal: {0}", legEx.ToString()));
+                        throw;
+                    }
+                }
 
                 // Add the task pane
                 AddTaskPane();
@@ -144,14 +173,28 @@ namespace AICADAssistant.AddIn
                 // Register SOLIDWORKS event handlers
                 RegisterSwEvents();
 
-                LogMessage("ConnectToSW: AI CAD Assistant berhasil terhubung ke SOLIDWORKS.");
+                LogMessage("[Stage Complete] ConnectToSW: AI CAD Assistant berhasil terhubung ke SOLIDWORKS.");
                 return true;
             }
             catch (Exception ex)
             {
-                LogMessage("ConnectToSW ERROR: " + ex.Message);
+                string errorDetails = string.Format("Tipe: {0}\nPesan: {1}\nStack Trace:\n{2}",
+                    ex.GetType().FullName, ex.Message, ex.StackTrace);
+                if (ex.InnerException != null)
+                {
+                    errorDetails += string.Format("\nInner Exception: {0} - {1}",
+                        ex.InnerException.GetType().FullName, ex.InnerException.Message);
+                }
+
+                LogMessage("ConnectToSW FATAL ERROR:\n" + errorDetails);
+
+                string logPath = Path.Combine(
+                    System.Environment.GetFolderPath(System.Environment.SpecialFolder.ApplicationData),
+                    "AICADAssistant", "addin.log");
+
                 MessageBox.Show(
-                    "Gagal menghubungkan AI CAD Assistant:\n" + ex.Message,
+                    string.Format("Gagal menghubungkan AI CAD Assistant:\n{0}\n\nDetail diagnostik dicatat di:\n{1}",
+                        ex.Message, logPath),
                     "AI CAD Assistant - Error",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return false;
@@ -190,7 +233,9 @@ namespace AICADAssistant.AddIn
         {
             try
             {
+                LogMessage("[Stage 4/6] Menyiapkan Task Pane...");
                 string iconPath = GetIconPath();
+                LogMessage(string.Format("[Stage 4/6] Icon path: '{0}' (Tersedia: {1})", iconPath, File.Exists(iconPath)));
 
                 // Create a Windows Forms host for the WPF control
                 UserControl hostForm = new UserControl();
@@ -203,29 +248,34 @@ namespace AICADAssistant.AddIn
                 elementHost.BackColor = System.Drawing.Color.White;
 
                 // Create the WPF UserControl
+                LogMessage("[Stage 5/6] Menginstansiasi WPF MainTaskPaneControl...");
                 _wpfControl = new MainTaskPaneControl(_swApp);
                 elementHost.Child = _wpfControl;
 
                 hostForm.Controls.Add(elementHost);
                 hostForm.CreateControl();
+                IntPtr handle = hostForm.Handle;
+                LogMessage(string.Format("[Stage 5/6] hostForm window handle dibuat: {0} (0x{0:X})", handle.ToInt64()));
 
                 // Create SOLIDWORKS task pane
+                LogMessage("[Stage 6/6] Memanggil CreateTaskpaneView2...");
                 _taskpaneView = _swApp.CreateTaskpaneView2(iconPath, ADDIN_TITLE);
 
                 if (_taskpaneView != null)
                 {
-                    // AddControl accepts the window handle or control identifier
-                    _taskpaneView.AddControl(hostForm.Handle.ToString(), ADDIN_TITLE);
-                    LogMessage("AddTaskPane: Task Pane berhasil dibuat.");
+                    LogMessage(string.Format("[Stage 6/6] Menghubungkan window handle via DisplayWindowFromHandlex64 ({0})...", handle.ToInt64()));
+                    bool displayOk = _taskpaneView.DisplayWindowFromHandlex64(handle.ToInt64());
+                    LogMessage(string.Format("[Stage 6/6] DisplayWindowFromHandlex64 return value: {0}", displayOk));
+                    LogMessage("AddTaskPane: Task Pane berhasil dibuat dan dihubungkan.");
                 }
                 else
                 {
-                    LogMessage("AddTaskPane: Gagal membuat ITaskpaneView.");
+                    LogMessage("AddTaskPane ERROR: CreateTaskpaneView2 mengembalikan null.");
                 }
             }
             catch (Exception ex)
             {
-                LogMessage("AddTaskPane ERROR: " + ex.Message);
+                LogMessage(string.Format("AddTaskPane ERROR: {0}\nStack trace: {1}", ex.ToString(), ex.StackTrace));
                 throw;
             }
         }
@@ -351,12 +401,17 @@ namespace AICADAssistant.AddIn
         {
             try
             {
-                string logDir = Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.ApplicationData), "AICADAssistant");
-                if (!Directory.Exists(logDir))
-                    Directory.CreateDirectory(logDir);
-                string logFile = Path.Combine(logDir, "addin.log");
                 string entry = string.Format("[{0:yyyy-MM-dd HH:mm:ss}] {1}{2}", DateTime.Now, message, System.Environment.NewLine);
-                File.AppendAllText(logFile, entry);
+
+                // 1. Roaming AppData log: %APPDATA%\AICADAssistant\addin.log
+                string appDataDir = Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.ApplicationData), "AICADAssistant");
+                if (!Directory.Exists(appDataDir)) Directory.CreateDirectory(appDataDir);
+                File.AppendAllText(Path.Combine(appDataDir, "addin.log"), entry);
+
+                // 2. Local AppData log: %LOCALAPPDATA%\AICADAssistant\logs\addin.log
+                string localDataDir = Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData), "AICADAssistant", "logs");
+                if (!Directory.Exists(localDataDir)) Directory.CreateDirectory(localDataDir);
+                File.AppendAllText(Path.Combine(localDataDir, "addin.log"), entry);
             }
             catch
             {
