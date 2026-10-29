@@ -1,36 +1,61 @@
 <#
 .SYNOPSIS
     Unregisters the AI CAD Assistant AddIn from SOLIDWORKS.
+    Run PowerShell as Administrator to remove HKLM registration entries.
 #>
 param(
     [string]$Configuration = "Debug"
 )
 
-$ErrorActionPreference = "SilentlyContinue"
+$ErrorActionPreference = "Stop"
+
+$guid = "{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = Split-Path -Parent $scriptDir
 $dllPath = Join-Path $projectRoot "src\AICADAssistant.AddIn\bin\$Configuration\AICADAssistant.AddIn.dll"
 $regAsmPath = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\RegAsm.exe"
 
-$guid = "{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}"
+Write-Host "Menghapus registrasi AI CAD Assistant dari SOLIDWORKS..." -ForegroundColor Cyan
 
-Write-Host "Menghapus registrasi Add-in dari SOLIDWORKS..." -ForegroundColor Cyan
-
-# Unregister COM
-if (Test-Path $dllPath) {
-    if (Test-Path $regAsmPath) {
-        & $regAsmPath $dllPath /unregister
-    }
+# 1. Unregister COM class via RegAsm
+if ((Test-Path $dllPath) -and (Test-Path $regAsmPath)) {
+    Write-Host "Membatalkan pendaftaran COM via 64-bit RegAsm..." -ForegroundColor Cyan
+    & $regAsmPath $dllPath /unregister
 }
 
-# Remove HKCU keys
-Remove-Item -Path "HKCU:\Software\SolidWorks\AddIns\$guid" -Recurse -Force -ErrorAction SilentlyContinue
-Remove-Item -Path "HKCU:\Software\SolidWorks\AddInsStartup\$guid" -Recurse -Force -ErrorAction SilentlyContinue
-
-# Remove HKLM keys
+# 2. Hapus kunci HKLM AddIns untuk GUID proyek ini saja
 try {
-    Remove-Item -Path "HKLM:\Software\SolidWorks\AddIns\$guid" -Recurse -Force -ErrorAction Stop
-} catch {}
+    $hklmPath = "HKLM:\SOFTWARE\SolidWorks\AddIns\$guid"
+    if (Test-Path $hklmPath) {
+        Remove-Item -Path $hklmPath -Recurse -Force -ErrorAction Stop
+        Write-Host "[OK] Kunci registri HKLM AddIns dihapus ($guid)" -ForegroundColor Green
+    }
+} catch {
+    Write-Warning "Gagal menghapus kunci HKLM (memerlukan hak Administrator): $_"
+}
 
+# 3. Hapus kunci HKCU AddInsStartup untuk GUID proyek ini saja
+try {
+    $hkcuStartup = "HKCU:\Software\SolidWorks\AddInsStartup\$guid"
+    if (Test-Path $hkcuStartup) {
+        Remove-Item -Path $hkcuStartup -Recurse -Force -ErrorAction Stop
+        Write-Host "[OK] Kunci registri HKCU AddInsStartup dihapus ($guid)" -ForegroundColor Green
+    }
+} catch {
+    Write-Warning "Gagal menghapus kunci HKCU AddInsStartup: $_"
+}
+
+# 4. Hapus kunci legacy HKCU AddIns jika masih ada
+try {
+    $hkcuLegacy = "HKCU:\Software\SolidWorks\AddIns\$guid"
+    if (Test-Path $hkcuLegacy) {
+        Remove-Item -Path $hkcuLegacy -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host "[OK] Kunci legacy HKCU AddIns dibersihkan ($guid)" -ForegroundColor Green
+    }
+} catch {
+    # Non-fatal
+}
+
+Write-Host ""
 Write-Host "[SUCCESS] AI CAD Assistant berhasil dihapus dari registrasi SOLIDWORKS." -ForegroundColor Green

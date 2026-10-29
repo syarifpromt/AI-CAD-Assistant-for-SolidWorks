@@ -188,6 +188,35 @@
    - **Unit Tests**: 44/44 unit test lolos (100% passed).
    - **Validasi RegAsm Dry-run**: Pengujian simulasi pembuatan registri via `RegAsm.exe $dllPath /codebase /regfile:...` menghasilkan berkas registri CLSID murni untuk `SwAddIn` dengan **ExitCode 0 (Sukses)** tanpa memanggil TlbExp dan tanpa error RA0000.
 
+---
+
+## Tahap 10: Standardisasi Registrasi SOLIDWORKS Add-In Discovery (HKLM Title & Description)
+
+1. **Analisis Masalah Visibilitas Add-in di SOLIDWORKS**:
+   - Gejala: AI CAD Assistant tidak muncul pada dialog *Tools -> Add-Ins* di SOLIDWORKS 2025 meskipun assembly COM telah terdaftar di CLSID.
+   - Pemeriksaan registri aktual:
+     - `HKLM\SOFTWARE\SolidWorks\AddIns\{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}`: Hanya memuat nilai `(Default) = 1`, sedangkan nilai `Title` dan `Description` tidak ditemukan.
+     - `HKCU\Software\SolidWorks\AddIns\{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}`: Memuat `Title` dan `Description`.
+   - Akar masalah: Sesuai spesifikasi API resmi SOLIDWORKS, proses penemuan add-in (*add-in discovery*) untuk menampilkan entri di dialog *Tools -> Add-Ins* secara eksklusif membaca dari `HKLM\SOFTWARE\SolidWorks\AddIns\{GUID}`. Tanpa string `Title` dan `Description` pada kunci HKLM tersebut, SOLIDWORKS mengabaikan add-in dari daftar dialog antarmuka.
+2. **Penyelarasan Pola Registrasi Resmi**:
+   - `src/AICADAssistant.AddIn/AddInEntryPoint.cs`:
+     - Memperbarui `[ComRegisterFunction]` agar menulis `(Default) = 1` (DWORD), `Title = "AI CAD Assistant"` (String), dan `Description = "AI CAD Assistant untuk SOLIDWORKS menggunakan Gemini AI"` (String) langsung ke `HKLM\SOFTWARE\SolidWorks\AddIns\{GUID}`.
+     - Mempertahankan registrasi `HKCU\Software\SolidWorks\AddInsStartup\{GUID}` dengan `(Default) = 1` untuk status startup per pengguna.
+     - Membersihkan subkunci legacy di `HKCU\Software\SolidWorks\AddIns\{GUID}`.
+   - `scripts/register_addin.ps1`:
+     - Menambahkan validasi hak akses Administrator di awal skrip.
+     - Menulis konfigurasi lengkap ke `HKLM:\SOFTWARE\SolidWorks\AddIns\$guid` (`(Default)=1`, `Title`, `Description`).
+     - Menulis `HKCU:\Software\SolidWorks\AddInsStartup\$guid` (`(Default)=1`).
+     - Membersihkan entri legacy di `HKCU:\Software\SolidWorks\AddIns\$guid`.
+     - Memverifikasi keberadaan dan kebenaran seluruh nilai registri HKLM dan HKCU sebelum melaporkan pesan `[SUCCESS]`.
+   - `scripts/unregister_addin.ps1`:
+     - Memastikan pembersihan registrasi terisolasi secara ketat hanya pada GUID proyek `{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}` di HKLM, HKCU Startup, dan legacy HKCU tanpa menyentuh add-in lainnya.
+3. **Verifikasi**:
+   - **Kompilasi Solusi**: 100% Berhasil (0 Error).
+   - **Unit Tests**: 44/44 lolos (100% passed).
+   - **Validasi Sintaks Skrip**: Seluruh skrip PowerShell di `scripts/` lolos pemeriksaan AST Parser (0 Error).
+
+
 
 
 

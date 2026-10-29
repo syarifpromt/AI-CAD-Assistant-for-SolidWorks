@@ -1,13 +1,24 @@
 <#
 .SYNOPSIS
     Registers the AI CAD Assistant AddIn into SOLIDWORKS via 64-bit RegAsm.
-    Run PowerShell as Administrator to register in HKLM as well as HKCU.
+    Run PowerShell as Administrator to register into HKLM (mandatory for SOLIDWORKS Add-in discovery).
 #>
 param(
     [string]$Configuration = "Debug"
 )
 
 $ErrorActionPreference = "Stop"
+
+$guid = "{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}"
+$title = "AI CAD Assistant"
+$desc = "AI CAD Assistant untuk SOLIDWORKS menggunakan Gemini AI"
+
+# 0. Periksa hak Administrator
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    Write-Error "Registrasi SOLIDWORKS Add-In memerlukan hak Administrator untuk menulis ke 'HKLM:\SOFTWARE\SolidWorks\AddIns'. Harap buka PowerShell dengan opsi 'Run as Administrator'."
+    exit 1
+}
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = Split-Path -Parent $scriptDir
@@ -74,9 +85,7 @@ if ($missingDependencies.Count -gt 0) {
 }
 
 # 4. Daftarkan COM Add-in via 64-bit RegAsm
-# Catatan: Opsi /tlb tidak digunakan karena SOLIDWORKS berkomunikasi melalui antarmuka ISwAddin 
-# yang telah didefinisikan oleh SOLIDWORKS API (swpublished.dll). Ekspor .tlb tidak diperlukan 
-# dan dihindari untuk mencegah konflik ekspor type library unmanaged.
+# Opsi /tlb tidak digunakan karena SOLIDWORKS berkomunikasi melalui antarmuka ISwAddin (swpublished.dll)
 Write-Host "Mendaftarkan COM Add-in via 64-bit RegAsm..." -ForegroundColor Cyan
 & $regAsmPath $dllPath /codebase
 if ($LASTEXITCODE -ne 0) {
@@ -84,40 +93,70 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
-# 5. Tulis kunci registri SOLIDWORKS Add-in
-$guid = "{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}"
-$title = "AI CAD Assistant"
-$desc = "AI CAD Assistant untuk SOLIDWORKS menggunakan Gemini AI"
+# 5. Tulis kunci registri resmi SOLIDWORKS Add-in
+Write-Host "Menulis konfigurasi registri resmi SOLIDWORKS Add-in..." -ForegroundColor Cyan
 
-Write-Host "Menulis kunci registri SOLIDWORKS Add-in..." -ForegroundColor Cyan
-
-# 5a. HKCU AddIns & Startup (Wajib untuk user saat ini)
+# 5a. HKLM AddIns (Wajib: lokasi penemuan add-in untuk dialog Tools -> Add-Ins SOLIDWORKS)
 try {
-    $hkcuAddIns = "HKCU:\Software\SolidWorks\AddIns\$guid"
-    if (-not (Test-Path $hkcuAddIns)) { New-Item -Path $hkcuAddIns -Force | Out-Null }
-    Set-ItemProperty -Path $hkcuAddIns -Name "Title" -Value $title
-    Set-ItemProperty -Path $hkcuAddIns -Name "Description" -Value $desc
-    Set-ItemProperty -Path $hkcuAddIns -Name "IsEnabled" -Value 1 -Type DWord
-
-    $hkcuStartup = "HKCU:\Software\SolidWorks\AddInsStartup\$guid"
-    if (-not (Test-Path $hkcuStartup)) { New-Item -Path $hkcuStartup -Force | Out-Null }
-    Set-ItemProperty -Path $hkcuStartup -Name "(Default)" -Value 1 -Type DWord
-    Write-Host "[OK] Terdaftar di HKCU (User-level)" -ForegroundColor Green
+    $hklmAddIns = "HKLM:\SOFTWARE\SolidWorks\AddIns\$guid"
+    if (-not (Test-Path $hklmAddIns)) { New-Item -Path $hklmAddIns -Force | Out-Null }
+    Set-ItemProperty -Path $hklmAddIns -Name "(Default)" -Value 1 -Type DWord
+    Set-ItemProperty -Path $hklmAddIns -Name "Title" -Value $title -Type String
+    Set-ItemProperty -Path $hklmAddIns -Name "Description" -Value $desc -Type String
+    Write-Host "[OK] Terdaftar di HKLM:\SOFTWARE\SolidWorks\AddIns\$guid (Title, Description, Default=1)" -ForegroundColor Green
 } catch {
-    Write-Error "Gagal menulis kunci registri HKCU: $_"
+    Write-Error "Gagal menulis kunci registri HKLM: $_"
     exit 1
 }
 
-# 5b. HKLM AddIns (Opsional - jika dijalankan dengan hak Administrator)
+# 5b. HKCU AddInsStartup (Wajib: memuat add-in saat startup untuk user saat ini)
 try {
-    $hklmAddIns = "HKLM:\Software\SolidWorks\AddIns\$guid"
-    if (-not (Test-Path $hklmAddIns)) { New-Item -Path $hklmAddIns -Force -ErrorAction Stop | Out-Null }
-    Set-ItemProperty -Path $hklmAddIns -Name "(Default)" -Value 1 -Type DWord -ErrorAction Stop
-    Write-Host "[OK] Terdaftar di HKLM (Machine-wide)" -ForegroundColor Green
+    $hkcuStartup = "HKCU:\Software\SolidWorks\AddInsStartup\$guid"
+    if (-not (Test-Path $hkcuStartup)) { New-Item -Path $hkcuStartup -Force | Out-Null }
+    Set-ItemProperty -Path $hkcuStartup -Name "(Default)" -Value 1 -Type DWord
+    Write-Host "[OK] Terdaftar di HKCU:\Software\SolidWorks\AddInsStartup\$guid (Default=1)" -ForegroundColor Green
 } catch {
-    Write-Host "[INFO] HKLM dilewati (memerlukan hak Administrator). Add-in tetap aktif via HKCU (User-level)." -ForegroundColor Yellow
+    Write-Error "Gagal menulis kunci registri HKCU AddInsStartup: $_"
+    exit 1
+}
+
+# 5c. Pembersihan kunci legacy HKCU AddIns (jika ada dari versi skrip sebelumnya)
+try {
+    $hkcuLegacy = "HKCU:\Software\SolidWorks\AddIns\$guid"
+    if (Test-Path $hkcuLegacy) {
+        Remove-Item -Path $hkcuLegacy -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host "[INFO] Entri lama di HKCU:\Software\SolidWorks\AddIns telah dibersihkan." -ForegroundColor Yellow
+    }
+} catch {
+    # Non-fatal jika pembersihan legacy gagal
+}
+
+# 6. Verifikasi integritas nilai registri
+$hklmProps = Get-ItemProperty -Path "HKLM:\SOFTWARE\SolidWorks\AddIns\$guid" -ErrorAction SilentlyContinue
+$hkcuProps = Get-ItemProperty -Path "HKCU:\Software\SolidWorks\AddInsStartup\$guid" -ErrorAction SilentlyContinue
+
+$verificationPassed = $true
+if (-not $hklmProps -or $hklmProps.Title -ne $title -or $hklmProps.Description -ne $desc) {
+    Write-Error "Verifikasi HKLM gagal: Title atau Description tidak cocok."
+    $verificationPassed = $false
+}
+
+if (-not $hkcuProps -or $hkcuProps.'(Default)' -ne 1) {
+    Write-Error "Verifikasi HKCU Startup gagal: Nilai Default bukan 1."
+    $verificationPassed = $false
+}
+
+if (-not $verificationPassed) {
+    exit 1
 }
 
 Write-Host ""
-Write-Host "[SUCCESS] AI CAD Assistant BERHASIL didaftarkan!" -ForegroundColor Green
-Write-Host "Silakan buka SOLIDWORKS -> Tools -> Add-Ins untuk mengaktifkan." -ForegroundColor Cyan
+Write-Host "[SUCCESS] AI CAD Assistant BERHASIL didaftarkan ke SOLIDWORKS 2025!" -ForegroundColor Green
+Write-Host "Detail Registrasi:" -ForegroundColor Cyan
+Write-Host "  - GUID:        $guid"
+Write-Host "  - Title:       $title"
+Write-Host "  - Description: $desc"
+Write-Host "  - Discovery:   HKLM:\SOFTWARE\SolidWorks\AddIns\$guid"
+Write-Host "  - Startup:     HKCU:\Software\SolidWorks\AddInsStartup\$guid"
+Write-Host ""
+Write-Host "Silakan buka SOLIDWORKS 2025 -> Tools -> Add-Ins untuk memverifikasi." -ForegroundColor Cyan

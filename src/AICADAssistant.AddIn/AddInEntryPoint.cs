@@ -35,37 +35,37 @@ namespace AICADAssistant.AddIn
             {
                 string guidStr = t.GUID.ToString("B").ToUpper();
 
-                // HKLM: marks this add-in so SOLIDWORKS loads it at startup (value = 1)
+                // HKLM: SOLIDWORKS requires Title and Description in HKLM\SOFTWARE\SolidWorks\AddIns\{GUID}
                 try
                 {
                     using (RegistryKey hklmKey = Registry.LocalMachine.CreateSubKey(@"SOFTWARE\SolidWorks\AddIns\" + guidStr))
                     {
                         if (hklmKey != null)
+                        {
                             hklmKey.SetValue(null, 1, RegistryValueKind.DWord);
+                            hklmKey.SetValue("Title", ADDIN_TITLE, RegistryValueKind.String);
+                            hklmKey.SetValue("Description", ADDIN_DESCRIPTION, RegistryValueKind.String);
+                        }
                     }
                 }
                 catch
                 {
-                    // HKLM requires elevated admin rights, fallback to HKCU
+                    // HKLM requires elevated admin rights
                 }
 
-                // HKCU: per-user add-in info and startup flag
-                using (RegistryKey hkcuKey = Registry.CurrentUser.CreateSubKey(@"SOFTWARE\SolidWorks\AddIns\" + guidStr))
-                {
-                    if (hkcuKey != null)
-                    {
-                        hkcuKey.SetValue("Description", ADDIN_DESCRIPTION, RegistryValueKind.String);
-                        hkcuKey.SetValue("Title", ADDIN_TITLE, RegistryValueKind.String);
-                        hkcuKey.SetValue("IsEnabled", 1, RegistryValueKind.DWord);
-                    }
-                }
-
-                // Startup key
+                // HKCU: Startup key for the current user
                 using (RegistryKey startupKey = Registry.CurrentUser.CreateSubKey(@"SOFTWARE\SolidWorks\AddInsStartup\" + guidStr))
                 {
                     if (startupKey != null)
                         startupKey.SetValue(null, 1, RegistryValueKind.DWord);
                 }
+
+                // Clean up legacy HKCU AddIns key if it exists from older scripts
+                try
+                {
+                    Registry.CurrentUser.DeleteSubKey(@"SOFTWARE\SolidWorks\AddIns\" + guidStr, false);
+                }
+                catch { }
 
                 LogMessage("RegisterFunction: Add-in berhasil didaftarkan.");
             }
