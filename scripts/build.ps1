@@ -22,9 +22,8 @@ Write-Host "Membangun solusi AI CAD Assistant ($Configuration | $Platform)..." -
 & $msBuildPath $solutionPath /p:Configuration=$Configuration /p:Platform=$Platform /v:m
 
 if ($LASTEXITCODE -eq 0) {
-    Write-Host "✓ Build Berhasil!" -ForegroundColor Green
+    Write-Host "[OK] Build Berhasil!" -ForegroundColor Green
 } else {
-    Write-Host "✗ Build Gagal!" -ForegroundColor Red
+    Write-Host "[ERROR] Build Gagal!" -ForegroundColor Red
     exit $LASTEXITCODE
 }
-

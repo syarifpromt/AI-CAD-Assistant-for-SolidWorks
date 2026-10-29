@@ -19,17 +19,18 @@ Write-Host "Menghapus registrasi Add-in dari SOLIDWORKS..." -ForegroundColor Cya
 
 # Unregister COM
 if (Test-Path $dllPath) {
-    & $regAsmPath $dllPath /unregister
+    if (Test-Path $regAsmPath) {
+        & $regAsmPath $dllPath /unregister
+    }
 }
 
 # Remove HKCU keys
-Remove-Item -Path "HKCU:\Software\SolidWorks\AddIns\$guid" -Recurse -Force
-Remove-Item -Path "HKCU:\Software\SolidWorks\AddInsStartup\$guid" -Recurse -Force
+Remove-Item -Path "HKCU:\Software\SolidWorks\AddIns\$guid" -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -Path "HKCU:\Software\SolidWorks\AddInsStartup\$guid" -Recurse -Force -ErrorAction SilentlyContinue
 
 # Remove HKLM keys
 try {
     Remove-Item -Path "HKLM:\Software\SolidWorks\AddIns\$guid" -Recurse -Force -ErrorAction Stop
 } catch {}
 
-Write-Host "✓ AI CAD Assistant berhasil dihapus dari registrasi SOLIDWORKS." -ForegroundColor Green
-
+Write-Host "[SUCCESS] AI CAD Assistant berhasil dihapus dari registrasi SOLIDWORKS." -ForegroundColor Green
