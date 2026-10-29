@@ -1,32 +1,133 @@
-# Build output
-bin/
-obj/
+# ==============================================================================
+# .gitignore for AI CAD Assistant for SOLIDWORKS
+# Visual Studio / .NET Framework / C# / SOLIDWORKS / AI Secrets
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Build Results & Binaries
+# ------------------------------------------------------------------------------
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]uild/
+*.dll
+*.exe
+*.pdb
+*.ilk
+*.msi
+*.msm
+*.msp
+*.tlb
+*.idb
+
+# ------------------------------------------------------------------------------
+# Visual Studio & IDE Artifacts
+# ------------------------------------------------------------------------------
+.vs/
 *.user
 *.suo
-.vs/
+*.userosscache
+*.sln.docstates
+*.userprefs
+*.dbmdl
+*.opendb
+*.VC.opendb
+*.VC.db
 
-# Local configuration (contains secrets)
+# JetBrains Rider / ReSharper
+.idea/
+_ReSharper*/
+*.DotSettings.user
+
+# Visual Studio Code
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.history/
+
+# ------------------------------------------------------------------------------
+# SOLIDWORKS Lock, Journal & Backup Files
+# ------------------------------------------------------------------------------
+# Lock files created when a document is opened in SOLIDWORKS
+~$*
+~$*.sldprt
+~$*.sldasm
+~$*.slddrw
+# SOLIDWORKS journal and error files
+swxJrn.swj
+swxJrn.bak
+*.swp
+*.bak
+*.backup
+*.err
+
+# ------------------------------------------------------------------------------
+# Secrets, Local Configuration & Security (DO NOT COMMIT)
+# ------------------------------------------------------------------------------
+# DPAPI encrypted credentials & API key stores
+credential.dat
+*.credential.dat
+*.secret
+*.key
+*.token
+
+# Local configuration overrides
 *.local.config
+*.local.json
 appsettings.local.json
 local.settings.json
 AICADAssistant.config.json
 
-# Logs
+# ------------------------------------------------------------------------------
+# Application Runtime Data, Checkpoints & Logs
+# ------------------------------------------------------------------------------
+# Checkpoint backups created before CAD modifications
+checkpoints/
+*.checkpoint
+*.checkpoint.sldprt
+
+# Application and diagnostic logs
 logs/
 *.log
+addin.log
 
-# NuGet
+# Temporary export outputs from testing
+exports/
+*.step.tmp
+*.stl.tmp
+
+# ------------------------------------------------------------------------------
+# NuGet Packages & Dependencies
+# ------------------------------------------------------------------------------
 *.nupkg
 packages/
+!packages/repositories.config
+project.lock.json
+project.assets.json
 
-# Test results
-TestResults/
+# ------------------------------------------------------------------------------
+# Unit Test Results & Code Coverage
+# ------------------------------------------------------------------------------
+[Tt]est[Rr]esults/
+*.trx
+*.coverage
+*.coveragexml
 
-# Windows thumbnails
+# ------------------------------------------------------------------------------
+# Windows & OS Artifacts
+# ------------------------------------------------------------------------------
 Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
 Desktop.ini
-
-# IDE
-.idea/
-*.DotSettings.user
-
+$RECYCLE.BIN/
+*.cab
