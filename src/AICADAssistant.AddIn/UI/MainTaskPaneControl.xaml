@@ -197,11 +197,14 @@
                 <TextBox x:Name="InputTextBox" Grid.Column="1"
                          Text="{Binding UserInput, UpdateSourceTrigger=PropertyChanged}"
                          AcceptsReturn="True"
+                         Focusable="True"
+                         IsTabStop="True"
                          MaxHeight="80" MinHeight="32"
                          VerticalScrollBarVisibility="Auto"
                          TextWrapping="Wrap"
                          Padding="6,4"
-                         KeyDown="OnInputKeyDown" />
+                         PreviewMouseDown="OnInputPreviewMouseDown"
+                         PreviewKeyDown="OnInputPreviewKeyDown" />
 
                 <!-- Send Button -->
                 <Button Grid.Column="2" Content="Kirim"

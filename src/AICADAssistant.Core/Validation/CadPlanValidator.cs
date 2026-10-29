@@ -132,6 +132,18 @@ namespace AICADAssistant.Core.Validation
                     ValidatePositiveDouble(op, "depth", result);
                     break;
 
+                case OperationType.RevolvedBoss:
+                    double revAngle;
+                    if (op.TryGetDouble("angle", out revAngle) && revAngle <= 0)
+                    {
+                        result.AddError(string.Format("Operasi '{0}' ({1}): Parameter 'angle' harus bernilai positif (diterima: {2}).", op.Id, op.Type, revAngle));
+                    }
+                    break;
+
+                case OperationType.CreateHemisphere:
+                    ValidatePositiveDouble(op, "diameter", "radius", result);
+                    break;
+
                 case OperationType.Fillet:
                     ValidatePositiveDouble(op, "radius", result);
                     break;

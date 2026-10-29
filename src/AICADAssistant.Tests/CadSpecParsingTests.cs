@@ -90,6 +90,35 @@ namespace AICADAssistant.Tests
             Assert.IsTrue(msg.Contains("1. diameter lubang"));
             Assert.IsTrue(msg.Contains("2. ketebalan pelat"));
         }
+
+        [TestMethod]
+        public void ParseCadSpec_HemisphereJson_ParsesCorrectly()
+        {
+            string json = @"
+            {
+                ""RequestId"": ""hemi-001"",
+                ""DocumentType"": 0,
+                ""Units"": ""mm"",
+                ""Operations"": [
+                    {
+                        ""Id"": ""h1"",
+                        ""Type"": 17,
+                        ""Parameters"": { ""diameter"": 100.0, ""plane"": ""Front"" },
+                        ""Description"": ""Setengah bola diameter 100 mm""
+                    }
+                ]
+            }";
+
+            var spec = _planner.ParseCadSpec(json);
+            Assert.IsNotNull(spec);
+            Assert.AreEqual("hemi-001", spec.RequestId);
+            Assert.AreEqual(1, spec.Operations.Count);
+            Assert.AreEqual(OperationType.CreateHemisphere, spec.Operations[0].Type);
+
+            double diam;
+            Assert.IsTrue(spec.Operations[0].TryGetDouble("diameter", out diam));
+            Assert.AreEqual(100.0, diam);
+        }
     }
 }
 

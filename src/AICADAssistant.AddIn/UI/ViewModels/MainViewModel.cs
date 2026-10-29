@@ -253,15 +253,12 @@ namespace AICADAssistant.AddIn.UI.ViewModels
                     return;
                 }
 
-                // Valid plan ready
+                // Valid plan ready: Execute directly in SOLIDWORKS
                 CurrentCadSpec = spec;
-                string notes = !string.IsNullOrWhiteSpace(spec.Notes) ? "\nCatatan: " + spec.Notes : "";
-                Messages.Add(ConversationMessage.AssistantText(
-                    string.Format("Rencana CAD berhasil disusun ({0} operasi, satuan: {1}).{2}\nTekan tombol 'Buat Model' untuk mengeksekusi di SOLIDWORKS.",
-                    spec.Operations.Count, spec.Units, notes)));
+                OperationStatus = "Mengeksekusi Pemodelan CAD di SOLIDWORKS...";
+                StatusType = OperationStatusType.BuildingModel;
 
-                OperationStatus = "Rencana Siap Dieksekusi";
-                StatusType = OperationStatusType.Success;
+                await ExecuteSpecDirectlyAsync(spec).ConfigureAwait(true);
             }
             catch (GeminiException ex)
             {
@@ -402,11 +399,25 @@ namespace AICADAssistant.AddIn.UI.ViewModels
 
         public async Task BuildModelAsync()
         {
-            if (CurrentCadSpec == null) return;
+            if (CurrentCadSpec == null || _isBusy) return;
 
             IsBusy = true;
             OperationStatus = "Membangun Model di SOLIDWORKS...";
             StatusType = OperationStatusType.BuildingModel;
+
+            try
+            {
+                await ExecuteSpecDirectlyAsync(CurrentCadSpec).ConfigureAwait(true);
+            }
+            finally
+            {
+                IsBusy = false;
+            }
+        }
+
+        private async Task ExecuteSpecDirectlyAsync(CadSpec spec)
+        {
+            if (spec == null) return;
 
             try
             {
@@ -422,49 +433,70 @@ namespace AICADAssistant.AddIn.UI.ViewModels
                 }
 
                 // Execute deterministically on SOLIDWORKS COM
-                ExecutionResult result = await Task.Run(() => _swService.ExecuteSpec(CurrentCadSpec, _settings.OutputDirectory)).ConfigureAwait(true);
+                ExecutionResult result = await Task.Run(() => _swService.ExecuteSpec(spec, _settings.OutputDirectory)).ConfigureAwait(true);
 
-                if (result.Success)
+                if (result.Success && result.SolidBodyCount > 0)
                 {
-                    string bboxInfo = result.BoundingBoxMm != null && result.BoundingBoxMm.Length >= 3
-                        ? string.Format(" (Ukuran: {0:F1} × {1:F1} × {2:F1} mm)", result.BoundingBoxMm[0], result.BoundingBoxMm[1], result.BoundingBoxMm[2])
-                        : "";
+                    var sb = new System.Text.StringBuilder();
+                    sb.AppendLine("✓ Model 3D berhasil dibuat dan direbuild secara native di SOLIDWORKS!");
 
-                    string msg = string.Format("Model 3D berhasil dibuat dan direbuild secara native di SOLIDWORKS!{0}\nJumlah solid body: {1}\nWaktu pemodelan: {2} ms",
-                        bboxInfo, result.SolidBodyCount, result.DurationMs);
+                    if (!string.IsNullOrWhiteSpace(result.DocumentTitle))
+                    {
+                        sb.AppendLine("• Dokumen: " + result.DocumentTitle);
+                    }
+                    if (!string.IsNullOrWhiteSpace(result.FeatureName))
+                    {
+                        sb.AppendLine("• Fitur: " + result.FeatureName);
+                    }
+                    sb.AppendLine(string.Format("• Status Rebuild: {0}", result.RebuildSuccess ? "Berhasil (100% Valid)" : "Peringatan"));
+                    sb.AppendLine(string.Format("• Solid Body: {0}", result.SolidBodyCount));
+
+                    if (result.BoundingBoxMm != null && result.BoundingBoxMm.Length >= 3 &&
+                        (result.BoundingBoxMm[0] > 0 || result.BoundingBoxMm[1] > 0 || result.BoundingBoxMm[2] > 0))
+                    {
+                        sb.AppendLine(string.Format("• Dimensi Bounding Box: {0:F1} × {1:F1} × {2:F1} mm",
+                            result.BoundingBoxMm[0], result.BoundingBoxMm[1], result.BoundingBoxMm[2]));
+                    }
+
+                    if (result.VolumeMm3 > 0)
+                    {
+                        sb.AppendLine(string.Format("• Volume Benda: {0:N2} mm³", result.VolumeMm3));
+                    }
+
+                    sb.AppendLine(string.Format("• Waktu Eksekusi: {0} ms", result.DurationMs));
 
                     if (!string.IsNullOrWhiteSpace(result.SavedFilePath))
                     {
-                        msg += "\nTersimpan di: " + result.SavedFilePath;
+                        sb.AppendLine("• Berkas Tersimpan: " + result.SavedFilePath);
                         CurrentDocumentPath = result.SavedFilePath;
                     }
 
                     if (result.ExportedFilePaths != null && result.ExportedFilePaths.Count > 0)
                     {
-                        msg += "\nBerkas ekspor: " + string.Join(", ", result.ExportedFilePaths);
+                        sb.AppendLine("• Ekspor: " + string.Join(", ", result.ExportedFilePaths));
                     }
 
-                    Messages.Add(ConversationMessage.AssistantText(msg));
+                    Messages.Add(ConversationMessage.AssistantText(sb.ToString().TrimEnd()));
                     OperationStatus = "Model Berhasil Dibuat";
                     StatusType = OperationStatusType.Success;
                 }
                 else
                 {
-                    Messages.Add(ConversationMessage.ErrorMessage(
-                        "Gagal membuat model: " + result.ErrorMessage));
+                    string err = !string.IsNullOrWhiteSpace(result.ErrorMessage)
+                        ? result.ErrorMessage
+                        : (result.SolidBodyCount == 0 ? "Tidak ada Solid Body yang terbentuk (Body Count = 0)." : "Gagal mengeksekusi geometri di SOLIDWORKS.");
+
+                    Messages.Add(ConversationMessage.ErrorMessage("Gagal membuat model: " + err));
                     OperationStatus = "Pembuatan Model Gagal";
                     StatusType = OperationStatusType.Failed;
                 }
             }
             catch (Exception ex)
             {
+                LoggingService.Instance.Error("Kesalahan saat mengeksekusi model CAD", ex);
                 Messages.Add(ConversationMessage.ErrorMessage("Terjadi kesalahan pembuatan model: " + ex.Message));
                 OperationStatus = "Error";
                 StatusType = OperationStatusType.Failed;
-            }
-            finally
-            {
-                IsBusy = false;
             }
         }
 

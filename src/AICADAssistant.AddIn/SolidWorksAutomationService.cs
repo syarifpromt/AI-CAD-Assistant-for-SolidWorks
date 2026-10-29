@@ -40,7 +40,8 @@ namespace AICADAssistant.AddIn
 
             var stopwatch = Stopwatch.StartNew();
             var execResult = new ExecutionResult();
-            ModelDoc2 activeDoc = null;
+            ModelDoc2 activeDoc = GetActiveDocument();
+            var createdFeatures = new List<string>();
 
             try
             {
@@ -108,7 +109,9 @@ namespace AICADAssistant.AddIn
                             double depthVal;
                             op.TryGetDouble("depth", out depthVal);
                             double depthM = UnitConverter.ConvertToInternal(depthVal, spec.Units);
-                            bool extOk = ExtrudeBoss(activeDoc, depthM);
+                            string extFeatName;
+                            bool extOk = ExtrudeBoss(activeDoc, depthM, out extFeatName);
+                            if (extOk && !string.IsNullOrEmpty(extFeatName)) createdFeatures.Add(extFeatName);
                             opRes = extOk
                                 ? OperationResult.Succeeded(op.Id)
                                 : OperationResult.Failed(op.Id, "Gagal melakukan Extrude Boss.");
@@ -123,7 +126,9 @@ namespace AICADAssistant.AddIn
                             double cutVal;
                             op.TryGetDouble("depth", out cutVal);
                             double cutM = UnitConverter.ConvertToInternal(cutVal, spec.Units);
-                            bool cutOk = ExtrudeCut(activeDoc, cutM);
+                            string cutFeatName;
+                            bool cutOk = ExtrudeCut(activeDoc, cutM, out cutFeatName);
+                            if (cutOk && !string.IsNullOrEmpty(cutFeatName)) createdFeatures.Add(cutFeatName);
                             opRes = cutOk
                                 ? OperationResult.Succeeded(op.Id)
                                 : OperationResult.Failed(op.Id, "Gagal melakukan Extrude Cut.");
@@ -138,7 +143,9 @@ namespace AICADAssistant.AddIn
                             double filVal;
                             op.TryGetDouble("radius", out filVal);
                             double filM = UnitConverter.ConvertToInternal(filVal, spec.Units);
-                            bool filOk = AddFillet(activeDoc, filM);
+                            string filFeatName;
+                            bool filOk = AddFillet(activeDoc, filM, out filFeatName);
+                            if (filOk && !string.IsNullOrEmpty(filFeatName)) createdFeatures.Add(filFeatName);
                             opRes = filOk
                                 ? OperationResult.Succeeded(op.Id)
                                 : OperationResult.Failed(op.Id, "Gagal menambahkan fillet.");
@@ -153,7 +160,9 @@ namespace AICADAssistant.AddIn
                             double chamVal;
                             op.TryGetDouble("distance", out chamVal);
                             double chamM = UnitConverter.ConvertToInternal(chamVal, spec.Units);
-                            bool chamOk = AddChamfer(activeDoc, chamM);
+                            string chamFeatName;
+                            bool chamOk = AddChamfer(activeDoc, chamM, out chamFeatName);
+                            if (chamOk && !string.IsNullOrEmpty(chamFeatName)) createdFeatures.Add(chamFeatName);
                             opRes = chamOk
                                 ? OperationResult.Succeeded(op.Id)
                                 : OperationResult.Failed(op.Id, "Gagal menambahkan chamfer.");
@@ -170,10 +179,57 @@ namespace AICADAssistant.AddIn
                             op.TryGetDouble("depth", out hDepthVal);
                             double hDiamM = UnitConverter.ConvertToInternal(hDiamVal, spec.Units);
                             double hDepthM = UnitConverter.ConvertToInternal(hDepthVal, spec.Units);
-                            bool holeOk = AddSimpleHole(activeDoc, hDiamM, hDepthM);
+                            string holeFeatName;
+                            bool holeOk = AddSimpleHole(activeDoc, hDiamM, hDepthM, out holeFeatName);
+                            if (holeOk && !string.IsNullOrEmpty(holeFeatName)) createdFeatures.Add(holeFeatName);
                             opRes = holeOk
                                 ? OperationResult.Succeeded(op.Id)
                                 : OperationResult.Failed(op.Id, "Gagal menambahkan lubang.");
+                            break;
+
+                        case OperationType.RevolvedBoss:
+                            if (activeDoc == null)
+                            {
+                                opRes = OperationResult.Failed(op.Id, "Tidak ada dokumen aktif untuk operasi revolve.");
+                                break;
+                            }
+                            double revAngleDeg = 360.0;
+                            if (op.TryGetDouble("angle", out revAngleDeg) && revAngleDeg <= 0)
+                                revAngleDeg = 360.0;
+                            double revAngleRad = revAngleDeg * Math.PI / 180.0;
+                            string revFeatName;
+                            bool revOk = RevolvedBoss(activeDoc, revAngleRad, out revFeatName);
+                            if (revOk && !string.IsNullOrEmpty(revFeatName)) createdFeatures.Add(revFeatName);
+                            opRes = revOk
+                                ? OperationResult.Succeeded(op.Id)
+                                : OperationResult.Failed(op.Id, "Gagal melakukan Revolved Boss.");
+                            break;
+
+                        case OperationType.CreateHemisphere:
+                            if (activeDoc == null) activeDoc = CreateNewPartDocument();
+                            if (activeDoc == null)
+                            {
+                                opRes = OperationResult.Failed(op.Id, "Gagal menginisialisasi dokumen untuk pembuatan setengah bola.");
+                                break;
+                            }
+                            double hemiDiam;
+                            if (!op.TryGetDouble("diameter", out hemiDiam))
+                            {
+                                double hemiRad;
+                                if (op.TryGetDouble("radius", out hemiRad))
+                                    hemiDiam = hemiRad * 2.0;
+                                else
+                                    hemiDiam = 100.0;
+                            }
+                            double hemiDiamM = UnitConverter.ConvertToInternal(hemiDiam, spec.Units);
+                            string hemiPlane = "Front";
+                            op.TryGetString("plane", out hemiPlane);
+                            string hemiFeatName;
+                            bool hemiOk = CreateHemisphere(activeDoc, hemiDiamM, hemiPlane, out hemiFeatName);
+                            if (hemiOk && !string.IsNullOrEmpty(hemiFeatName)) createdFeatures.Add(hemiFeatName);
+                            opRes = hemiOk
+                                ? OperationResult.Succeeded(op.Id)
+                                : OperationResult.Failed(op.Id, "Gagal membuat setengah bola (hemisphere).");
                             break;
 
                         default:
@@ -199,13 +255,31 @@ namespace AICADAssistant.AddIn
                 if (activeDoc != null)
                 {
                     bool rebuildSuccess = RebuildModel(activeDoc);
+                    execResult.RebuildSuccess = rebuildSuccess;
                     if (!rebuildSuccess)
                     {
                         execResult.FeatureWarnings.Add("Peringatan: Terdapat peringatan atau error saat membangun ulang (rebuild) model.");
                     }
 
+                    execResult.DocumentTitle = activeDoc.GetTitle();
                     execResult.SolidBodyCount = GetSolidBodyCount(activeDoc);
                     execResult.BoundingBoxMm = GetBoundingBoxMm(activeDoc);
+                    execResult.VolumeMm3 = GetVolumeMm3(activeDoc);
+                    if (createdFeatures.Count > 0)
+                    {
+                        execResult.FeatureName = string.Join(", ", createdFeatures);
+                    }
+
+                    // STRICT CHECK: Reject false success if no solid bodies exist
+                    if (execResult.SolidBodyCount <= 0)
+                    {
+                        stopwatch.Stop();
+                        execResult.Success = false;
+                        execResult.OverallStatus = ExecutionStatus.Failed;
+                        execResult.ErrorMessage = "Pembuatan geometri gagal: Tidak ada Solid Body yang terbentuk (Body Count = 0). Periksa apakah sketch tertutup dan operasi fitur valid.";
+                        execResult.DurationMs = stopwatch.ElapsedMilliseconds;
+                        return execResult;
+                    }
 
                     // Save part file
                     string targetFolder = !string.IsNullOrWhiteSpace(saveDirectory) && Directory.Exists(saveDirectory)
@@ -344,6 +418,13 @@ namespace AICADAssistant.AddIn
 
         public bool ExtrudeBoss(ModelDoc2 doc, double depthM)
         {
+            string dummy;
+            return ExtrudeBoss(doc, depthM, out dummy);
+        }
+
+        public bool ExtrudeBoss(ModelDoc2 doc, double depthM, out string featName)
+        {
+            featName = null;
             try
             {
                 // FeatureExtrusion3 parameters:
@@ -352,7 +433,12 @@ namespace AICADAssistant.AddIn
                     true, false, false, (int)swEndConditions_e.swEndCondBlind, 0,
                     depthM, 0, false, false, false, false, 0, 0, false, false, false, false, true, true, true, 0, 0, false);
 
-                return feat != null;
+                if (feat != null)
+                {
+                    featName = feat.Name;
+                    return true;
+                }
+                return false;
             }
             catch (Exception ex)
             {
@@ -363,13 +449,25 @@ namespace AICADAssistant.AddIn
 
         public bool ExtrudeCut(ModelDoc2 doc, double depthM)
         {
+            string dummy;
+            return ExtrudeCut(doc, depthM, out dummy);
+        }
+
+        public bool ExtrudeCut(ModelDoc2 doc, double depthM, out string featName)
+        {
+            featName = null;
             try
             {
                 Feature feat = doc.FeatureManager.FeatureCut4(
                     true, false, false, (int)swEndConditions_e.swEndCondBlind, 0,
                     depthM, 0, false, false, false, false, 0, 0, false, false, false, false, false, true, true, true, true, false, 0, 0, false, false);
 
-                return feat != null;
+                if (feat != null)
+                {
+                    featName = feat.Name;
+                    return true;
+                }
+                return false;
             }
             catch (Exception ex)
             {
@@ -380,16 +478,29 @@ namespace AICADAssistant.AddIn
 
         public bool AddFillet(ModelDoc2 doc, double radiusM)
         {
+            string dummy;
+            return AddFillet(doc, radiusM, out dummy);
+        }
+
+        public bool AddFillet(ModelDoc2 doc, double radiusM, out string featName)
+        {
+            featName = null;
             try
             {
-                object feat = doc.FeatureManager.FeatureFillet(
+                object rawFeat = doc.FeatureManager.FeatureFillet(
                     (int)swFeatureFilletOptions_e.swFeatureFilletUniformRadius,
                     radiusM,
                     (int)swFeatureFilletType_e.swFeatureFilletType_Simple,
                     0,
                     null, null, null);
 
-                return feat != null;
+                Feature feat = rawFeat as Feature;
+                if (feat != null)
+                {
+                    featName = feat.Name;
+                    return true;
+                }
+                return rawFeat != null;
             }
             catch (Exception ex)
             {
@@ -400,12 +511,24 @@ namespace AICADAssistant.AddIn
 
         public bool AddChamfer(ModelDoc2 doc, double distanceM)
         {
+            string dummy;
+            return AddChamfer(doc, distanceM, out dummy);
+        }
+
+        public bool AddChamfer(ModelDoc2 doc, double distanceM, out string featName)
+        {
+            featName = null;
             try
             {
                 Feature feat = doc.FeatureManager.InsertFeatureChamfer(
                     1, (int)swChamferType_e.swChamferEqualDistance, distanceM, 0, 0, 0, 0, 0);
 
-                return feat != null;
+                if (feat != null)
+                {
+                    featName = feat.Name;
+                    return true;
+                }
+                return false;
             }
             catch (Exception ex)
             {
@@ -416,18 +539,190 @@ namespace AICADAssistant.AddIn
 
         public bool AddSimpleHole(ModelDoc2 doc, double diamM, double depthM)
         {
+            string dummy;
+            return AddSimpleHole(doc, diamM, depthM, out dummy);
+        }
+
+        public bool AddSimpleHole(ModelDoc2 doc, double diamM, double depthM, out string featName)
+        {
+            featName = null;
             try
             {
                 // Hole creation via Sketch circle + Cut-Extrude (universal across SW 2023-2025)
                 doc.SketchManager.InsertSketch(true);
                 DrawCircle(doc, 0, 0, diamM / 2.0);
-                return ExtrudeCut(doc, depthM);
+                return ExtrudeCut(doc, depthM, out featName);
             }
             catch (Exception ex)
             {
                 LoggingService.Instance.Error("Gagal membuat Hole", ex);
                 return false;
             }
+        }
+
+        public bool RevolvedBoss(ModelDoc2 doc, double angleRad)
+        {
+            string dummy;
+            return RevolvedBoss(doc, angleRad, out dummy);
+        }
+
+        public bool RevolvedBoss(ModelDoc2 doc, double angleRad, out string featName)
+        {
+            featName = null;
+            try
+            {
+                if (doc == null) return false;
+                if (angleRad <= 0) angleRad = 2.0 * Math.PI;
+
+                Feature feat = doc.FeatureManager.FeatureRevolve2(
+                    true,                           // SingleDir
+                    true,                           // IsSolid
+                    false,                          // IsThin
+                    false,                          // IsCut
+                    false,                          // ReverseDir
+                    false,                          // BothDirectionUpToSameEntity
+                    (int)swEndConditions_e.swEndCondBlind, // Dir1Type (0)
+                    0,                              // Dir2Type
+                    angleRad,                       // Dir1Angle
+                    0,                              // Dir2Angle
+                    false,                          // OffsetReverse1
+                    false,                          // OffsetReverse2
+                    0,                              // OffsetDistance1
+                    0,                              // OffsetDistance2
+                    0,                              // ThinType
+                    0,                              // ThinThickness1
+                    0,                              // ThinThickness2
+                    true,                           // Merge
+                    true,                           // UseFeatScope
+                    true                            // UseAutoSelect
+                );
+
+                if (feat == null)
+                {
+                    feat = doc.FeatureManager.FeatureRevolve(
+                        angleRad, false, 0, (int)swEndConditions_e.swEndCondBlind, 0, true, true, true);
+                }
+
+                if (feat != null)
+                {
+                    featName = feat.Name;
+                    LoggingService.Instance.Info("Berhasil membuat Revolved Boss: " + featName);
+                    return true;
+                }
+                return false;
+            }
+            catch (Exception ex)
+            {
+                LoggingService.Instance.Error("Gagal melakukan Revolved Boss", ex);
+                return false;
+            }
+        }
+
+        public bool CreateHemisphere(ModelDoc2 doc, double diamM, string planeName, out string featName)
+        {
+            featName = null;
+            try
+            {
+                if (doc == null) return false;
+                double radiusM = diamM / 2.0;
+                if (radiusM <= 0) return false;
+
+                // 1. Open sketch on specified plane (default "Front Plane")
+                if (!OpenSketchOnPlane(doc, planeName))
+                {
+                    LoggingService.Instance.Error("Gagal membuka sketch untuk setengah bola di bidang: " + planeName);
+                    return false;
+                }
+
+                // 2. Draw quarter-circle arc from (R, 0, 0) to (0, R, 0) with center (0, 0, 0)
+                // Direction: +1 = Counter-Clockwise in XY plane
+                SketchSegment arc = doc.SketchManager.CreateArc(0, 0, 0, radiusM, 0, 0, 0, radiusM, 0, 1);
+                if (arc == null)
+                {
+                    LoggingService.Instance.Error("Gagal menggambar arc seperempat lingkaran untuk setengah bola");
+                    return false;
+                }
+
+                // 3. Draw horizontal base line from (0, 0, 0) to (R, 0, 0)
+                SketchSegment baseLine = doc.SketchManager.CreateLine(0, 0, 0, radiusM, 0, 0);
+
+                // 4. Draw vertical rotation axis line from (0, R, 0) to (0, 0, 0)
+                SketchSegment axisLine = doc.SketchManager.CreateLine(0, radiusM, 0, 0, 0, 0);
+
+                // 5. Select the vertical axis line with Mark = 4 (SolidWorks Revolve axis)
+                doc.ClearSelection2(true);
+                if (axisLine != null)
+                {
+                    axisLine.Select2(false, 4);
+                }
+
+                // 6. Execute Revolve 360 degrees (2 * PI radians)
+                Feature feat = doc.FeatureManager.FeatureRevolve2(
+                    true,                           // SingleDir
+                    true,                           // IsSolid
+                    false,                          // IsThin
+                    false,                          // IsCut
+                    false,                          // ReverseDir
+                    false,                          // BothDirectionUpToSameEntity
+                    (int)swEndConditions_e.swEndCondBlind, // Dir1Type (0)
+                    0,                              // Dir2Type
+                    2.0 * Math.PI,                  // Dir1Angle (360 degrees in radians)
+                    0,                              // Dir2Angle
+                    false,                          // OffsetReverse1
+                    false,                          // OffsetReverse2
+                    0,                              // OffsetDistance1
+                    0,                              // OffsetDistance2
+                    0,                              // ThinType
+                    0,                              // ThinThickness1
+                    0,                              // ThinThickness2
+                    true,                           // Merge
+                    true,                           // UseFeatScope
+                    true                            // UseAutoSelect
+                );
+
+                if (feat == null)
+                {
+                    // Fallback to FeatureRevolve
+                    feat = doc.FeatureManager.FeatureRevolve(
+                        2.0 * Math.PI, false, 0, (int)swEndConditions_e.swEndCondBlind, 0, true, true, true);
+                }
+
+                if (feat != null)
+                {
+                    featName = feat.Name;
+                    LoggingService.Instance.Info(string.Format("Berhasil membuat Setengah Bola solid (diameter {0:F1} mm, tinggi {1:F1} mm): {2}", diamM * 1000.0, radiusM * 1000.0, featName));
+                    return true;
+                }
+
+                LoggingService.Instance.Error("FeatureRevolve mengembalikan null saat membuat setengah bola");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                LoggingService.Instance.Error("Exception saat membuat setengah bola", ex);
+                return false;
+            }
+        }
+
+        public double GetVolumeMm3(ModelDoc2 doc)
+        {
+            try
+            {
+                if (doc == null || doc.Extension == null) return 0;
+                int status = 0;
+                object rawMass = doc.Extension.GetMassProperties2(1, out status, false);
+                double[] massProps = rawMass as double[];
+                if (massProps != null && massProps.Length > 3)
+                {
+                    // massProps[3] is volume in m^3. Convert to mm^3 (* 1e9)
+                    return massProps[3] * 1e9;
+                }
+            }
+            catch (Exception ex)
+            {
+                LoggingService.Instance.Warning("Gagal membaca volume model: " + ex.Message);
+            }
+            return 0;
         }
 
         public bool RebuildModel(ModelDoc2 doc)

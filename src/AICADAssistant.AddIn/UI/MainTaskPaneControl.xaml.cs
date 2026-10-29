@@ -1,6 +1,8 @@
+using System;
 using System.Collections.Specialized;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Threading;
 using SolidWorks.Interop.sldworks;
 using AICADAssistant.AddIn.UI.ViewModels;
 
@@ -21,6 +23,16 @@ namespace AICADAssistant.AddIn.UI
             {
                 ViewModel.Messages.CollectionChanged += OnMessagesCollectionChanged;
             }
+
+            // Ensure keyboard focus is set to the input box once loaded
+            Loaded += (s, e) =>
+            {
+                Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() =>
+                {
+                    InputTextBox.Focus();
+                    Keyboard.Focus(InputTextBox);
+                }));
+            };
         }
 
         public void OnActiveDocumentChanged()
@@ -36,14 +48,30 @@ namespace AICADAssistant.AddIn.UI
             ChatScrollViewer.ScrollToEnd();
         }
 
-        private void OnInputKeyDown(object sender, KeyEventArgs e)
+        private void OnInputPreviewMouseDown(object sender, MouseButtonEventArgs e)
         {
-            // Ctrl+Enter sends the message
-            if (e.Key == Key.Enter && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
+            InputTextBox.Focus();
+            Keyboard.Focus(InputTextBox);
+        }
+
+        private void OnInputPreviewKeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Enter)
             {
-                if (ViewModel.CanSendMessage)
+                // Shift+Enter creates a newline
+                if ((Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift)
+                {
+                    return;
+                }
+
+                // Normal Enter or Ctrl+Enter sends the message directly
+                if (ViewModel != null && ViewModel.CanSendMessage)
                 {
                     ViewModel.SendMessageCommand.Execute(null);
+                    e.Handled = true;
+                }
+                else
+                {
                     e.Handled = true;
                 }
             }

@@ -20,6 +20,10 @@ namespace AICADAssistant.Core.Models
         public string ErrorMessage { get; set; }
         public int SolidBodyCount { get; set; }
         public double[] BoundingBoxMm { get; set; }
+        public double VolumeMm3 { get; set; }
+        public string DocumentTitle { get; set; }
+        public string FeatureName { get; set; }
+        public bool RebuildSuccess { get; set; }
         public string SavedFilePath { get; set; }
         public List<string> ExportedFilePaths { get; set; }
         public string CheckpointPath { get; set; }

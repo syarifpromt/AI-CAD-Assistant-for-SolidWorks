@@ -2,7 +2,7 @@
 
 **Proyek:** AI CAD Assistant for SOLIDWORKS  
 **Tanggal Mulai:** 29 Oktober 2026  
-**Status Solusi:** Berhasil dikompilasi (0 Error), 44/44 Unit Test Berhasil (100% Passed)  
+**Status Solusi:** Berhasil dikompilasi (0 Error), 52/52 Unit Test Berhasil (100% Passed)  
 
 ---
 
@@ -242,6 +242,63 @@
    - **Kompilasi MSBuild**: 100% Berhasil (0 Error).
    - **Unit Tests**: 44/44 lolos (100% passed).
    - **Pemeriksaan Refleksi**: `ClassInterfaceType` terverifikasi `AutoDispatch` dan antarmuka `ISwAddin` terverifikasi utuh.
+
+---
+
+## Tahap 12: Implementasi v1.1 — Direct Chat-to-CAD Execution, Geometri Setengah Bola (Hemisphere & Revolve), Perbaikan Input Keyboard, dan Verifikasi Geometri Lengkap
+
+1. **Diagnosis & Perbaikan Geometri Setengah Bola (Hemisphere)**:
+   - Kasus aktual: Perintah pengguna "buat bentuk setengah bola diameter 100 mm" sebelumnya menghasilkan nilai 0 atau tidak membentuk geometri.
+   - Akar masalah:
+     - `OperationType.RevolvedBoss` sebelumnya belum ditangani dalam blok `switch (op.Type)` pada `SolidWorksAutomationService.ExecuteSpec` (jatuh ke `default:` tanpa mengeksekusi API SOLIDWORKS).
+     - Tidak ada validasi jumlah solid body (`SolidBodyCount == 0` dilaporkan sukses palsu).
+   - Solusi Geometris yang Diterapkan:
+     - Menambahkan operasi resmi `CreateHemisphere = 17` ke dalam `OperationType` dan `AllowedOperations.Whitelist`.
+     - Implementasi algoritma pemodelan native di `SolidWorksAutomationService.CreateHemisphere`:
+       - Membuka sketch pada bidang yang dipilih (default `Front Plane`).
+       - Menggambar busur seperempat lingkaran (`CreateArc`) berpusat di origin $(0,0,0)$ dari $(R,0,0)$ ke $(0,R,0)$ dengan arah berlawanan jarum jam (CCW, direction = +1).
+       - Menggambar garis dasar horizontal (`CreateLine`) dari $(0,0,0)$ ke $(R,0,0)$.
+       - Menggambar garis sumbu putar vertikal (`CreateLine`) dari $(0,R,0)$ ke $(0,0,0)$.
+       - Memilih garis sumbu putar dengan Mark = 4 (mark seleksi resmi API SOLIDWORKS untuk *Axis of Revolution*).
+       - Mengeksekusi `FeatureRevolve2` 360° ($2\pi$ radian) untuk membentuk benda padat sempurna (1 solid body, diameter dasar 100 mm, tinggi 50 mm, radius 50 mm, dasar lingkaran datar).
+     - Menghitung volume analitik dan terbaca via `GetMassProperties2`:
+       $$V = \frac{2}{3} \pi R^3 = \frac{2}{3} \pi (50)^3 \approx 261.799,39\text{ mm}^3$$
+     - Menolak pelaporan sukses jika `SolidBodyCount <= 0` dengan pesan error diagnostik yang jelas.
+
+2. **Direct Chat-to-CAD Execution**:
+   - Menghilangkan keharusan pengguna mengklik tombol manual "Buat Model".
+   - Alur baru di `MainViewModel.SendMessageAsync`:
+     - Pengguna mengirim instruksi pemodelan/revisi melalui chat.
+     - Respons Gemini di-parsing ke `CadSpec` dan divalidasi keamanannya via `CadPlanValidator`.
+     - Jika ada dimensi wajib yang hilang/ambigu, asisten langsung menanyakan klarifikasi spesifik di chat tanpa mengeksekusi.
+     - Jika spesifikasi valid, sistem langsung mengeksekusi pemodelan di SOLIDWORKS secara otomatis (`ExecuteSpecDirectlyAsync`).
+     - Hasil geometri aktual dilaporkan lengkap di riwayat percakapan: nama dokumen, nama fitur yang terbentuk, status rebuild, jumlah solid body, dimensi bounding box ($X \times Y \times Z\text{ mm}$), volume benda kerja ($\text{mm}^3$), waktu eksekusi, serta path berkas tersimpan dan ekspor.
+
+3. **Perbaikan Input Keyboard pada Chat TextBox**:
+   - Gejala: Input teks langsung di `InputTextBox` pada Task Pane tidak merespons ketikan tombol (hanya paste Ctrl+V yang berfungsi) karena pintasan keyboard SOLIDWORKS (akselerator seperti 'S', 'F', 'L') mencegat pesan keyboard Win32 sebelum diteruskan ke visual tree WPF di dalam unmanaged window.
+   - Solusi Interop yang Diterapkan:
+     - Membuat kelas `SafeElementHost : ElementHost` dan `TaskPaneWinFormsHost : UserControl` di `AddInEntryPoint.cs`.
+     - Menangani pesan Win32 `WM_GETDLGCODE` (0x0087) dengan mengembalikan `DLGC_WANTALLKEYS | DLGC_WANTCHARS | DLGC_WANTARROWS | DLGC_WANTTAB` (0x0087).
+     - Meng-override `IsInputKey` dan `IsInputChar` agar bernilai `true` untuk semua input karakter.
+     - Pada WPF `MainTaskPaneControl.xaml`: Menambahkan `Focusable="True"`, `IsTabStop="True"`, `PreviewMouseDown`, dan `PreviewKeyDown`.
+     - Pada `MainTaskPaneControl.xaml.cs`:
+       - Event `Loaded` memanggil `Dispatcher.BeginInvoke` dengan prioritas `Input` untuk merebut keyboard focus secara andal.
+       - Event `PreviewMouseDown` pada `InputTextBox` memastikan klaim `Keyboard.Focus(InputTextBox)`.
+       - Event `PreviewKeyDown`: Menekan `Enter` mengirim pesan langsung, `Shift+Enter` menyisipkan baris baru (*newline*), dan `Ctrl+Enter` mengirim pesan.
+
+4. **Keandalan & Pengujian Regresi**:
+   - Menambahkan 8 unit test baru (Total: 52 unit test):
+     - `Validate_CreateHemisphere_ValidDiameter_ReturnsValid`
+     - `Validate_CreateHemisphere_ValidRadius_ReturnsValid`
+     - `Validate_CreateHemisphere_ZeroOrNegativeDiameter_ReturnsInvalid`
+     - `Validate_CreateHemisphere_MissingDimensions_ReturnsInvalid`
+     - `Validate_RevolvedBoss_ValidAngle_ReturnsValid`
+     - `Validate_RevolvedBoss_NegativeAngle_ReturnsInvalid`
+     - `ParseCadSpec_HemisphereJson_ParsesCorrectly`
+     - `Hemisphere_VolumeCalculation_MatchesAnalyticalFormula`
+   - Hasil pengujian: **52/52 Lolos (100% Passed, 0 Gagal)** dalam 79 ms.
+   - Kompilasi solusi x64: **100% Berhasil (0 Error)**.
+
 
 
 

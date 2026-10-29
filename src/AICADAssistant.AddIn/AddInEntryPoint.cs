@@ -237,13 +237,14 @@ namespace AICADAssistant.AddIn
                 string iconPath = GetIconPath();
                 LogMessage(string.Format("[Stage 4/6] Icon path: '{0}' (Tersedia: {1})", iconPath, File.Exists(iconPath)));
 
-                // Create a Windows Forms host for the WPF control
-                UserControl hostForm = new UserControl();
+                // Create a custom Windows Forms host and SafeElementHost to bridge WPF <-> WinForms
+                // and preserve keyboard input against SOLIDWORKS accelerator key interception.
+                TaskPaneWinFormsHost hostForm = new TaskPaneWinFormsHost();
                 hostForm.Dock = DockStyle.Fill;
                 hostForm.BackColor = System.Drawing.Color.White;
 
-                // Create ElementHost to bridge WPF <-> WinForms
-                ElementHost elementHost = new ElementHost();
+                // Create SafeElementHost to bridge WPF <-> WinForms
+                SafeElementHost elementHost = new SafeElementHost();
                 elementHost.Dock = DockStyle.Fill;
                 elementHost.BackColor = System.Drawing.Color.White;
 
@@ -419,5 +420,71 @@ namespace AICADAssistant.AddIn
         }
 
         #endregion
+    }
+
+    /// <summary>
+    /// Custom ElementHost that prevents SOLIDWORKS accelerator table from intercepting
+    /// keyboard messages (typing, shortcuts, text navigation) meant for WPF input controls.
+    /// </summary>
+    public class SafeElementHost : ElementHost
+    {
+        private const int WM_GETDLGCODE = 0x0087;
+        private const int DLGC_WANTALLKEYS = 0x0004;
+        private const int DLGC_WANTARROWS = 0x0001;
+        private const int DLGC_WANTCHARS = 0x0080;
+        private const int DLGC_WANTTAB = 0x0002;
+
+        protected override bool IsInputKey(Keys keyData)
+        {
+            return true;
+        }
+
+        protected override bool IsInputChar(char charCode)
+        {
+            return true;
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == WM_GETDLGCODE)
+            {
+                m.Result = new IntPtr(DLGC_WANTALLKEYS | DLGC_WANTCHARS | DLGC_WANTARROWS | DLGC_WANTTAB);
+                return;
+            }
+            base.WndProc(ref m);
+        }
+    }
+
+    /// <summary>
+    /// Custom Windows Forms UserControl wrapper that retains focus and prevents
+    /// key-press swallowing across unmanaged Win32 / SolidWorks boundaries.
+    /// </summary>
+    public class TaskPaneWinFormsHost : UserControl
+    {
+        private const int WM_GETDLGCODE = 0x0087;
+        private const int DLGC_WANTALLKEYS = 0x0004;
+        private const int DLGC_WANTARROWS = 0x0001;
+        private const int DLGC_WANTCHARS = 0x0080;
+        private const int DLGC_WANTTAB = 0x0002;
+
+        protected override bool IsInputKey(Keys keyData)
+        {
+            return true;
+        }
+
+        protected override bool IsInputChar(char charCode)
+        {
+            return true;
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == WM_GETDLGCODE)
+            {
+                m.Result = new IntPtr(DLGC_WANTALLKEYS | DLGC_WANTCHARS | DLGC_WANTARROWS | DLGC_WANTTAB);
+                return;
+            }
+            base.WndProc(ref m);
+        }
     }
 }

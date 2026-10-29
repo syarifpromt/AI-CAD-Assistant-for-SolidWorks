@@ -116,7 +116,10 @@ namespace AICADAssistant.Core.CAD
                    "2. Jika ada dimensi kritis yang belum diketahui atau tidak masuk akal, tambahkan ke dalam array 'Unknowns'.\n" +
                    "3. Petakan urutan operasi pemodelan CAD native yang valid ke dalam array 'Operations'.\n" +
                    "Daftar OperationType: 0=NewPart, 1=NewSketch, 2=AddLine, 3=AddRectangle, 4=AddCircle, 5=AddDimension, " +
-                   "6=ExtrudeBoss, 7=ExtrudeCut, 8=RevolvedBoss, 9=Fillet, 10=Chamfer, 11=SimpleHole, 12=LinearPattern, 13=CircularPattern, 14=SavePart, 15=ExportStep, 16=ExportStl.\n\n" +
+                   "6=ExtrudeBoss, 7=ExtrudeCut, 8=RevolvedBoss, 9=Fillet, 10=Chamfer, 11=SimpleHole, 12=LinearPattern, 13=CircularPattern, 14=SavePart, 15=ExportStep, 16=ExportStl, 17=CreateHemisphere.\n\n" +
+                   "Pedoman bentuk khusus:\n" +
+                   "- Untuk bentuk setengah bola (hemisphere/kubah): Gunakan operasi 'CreateHemisphere' (Type=17) dengan parameter 'diameter' (atau 'radius') dan 'plane' (default 'Front'). Contoh: { \"Id\": \"hemi1\", \"Type\": 17, \"Parameters\": { \"diameter\": 100.0, \"plane\": \"Front\" }, \"Description\": \"Buat setengah bola solid diameter 100 mm\" }.\n" +
+                   "- Untuk fitur putar (revolve): Gunakan 'RevolvedBoss' (Type=8) dengan parameter 'angle' (default 360).\n\n" +
                    "PENTING: Jangan membuat script C# atau macro VBA. Kembalikan HANYA format JSON CadSpec valid berikut:\n" +
                    CadSpecJsonSchemaExample;
         }

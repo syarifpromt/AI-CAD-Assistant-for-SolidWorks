@@ -21,7 +21,8 @@ namespace AICADAssistant.Core.Models
         CircularPattern = 13,
         SavePart = 14,
         ExportStep = 15,
-        ExportStl = 16
+        ExportStl = 16,
+        CreateHemisphere = 17
     }
 
     public class CadOperation
@@ -137,7 +138,8 @@ namespace AICADAssistant.Core.Models
             OperationType.CircularPattern,
             OperationType.SavePart,
             OperationType.ExportStep,
-            OperationType.ExportStl
+            OperationType.ExportStl,
+            OperationType.CreateHemisphere
         };
     }
 }

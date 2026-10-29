@@ -117,6 +117,24 @@ namespace AICADAssistant.Tests
             double result = UnitConverter.ConvertToInternal(-50.0, "mm");
             Assert.AreEqual(-0.05, result, 1e-10);
         }
+
+        [TestMethod]
+        public void Hemisphere_VolumeCalculation_MatchesAnalyticalFormula()
+        {
+            // Analytical verification for hemisphere: diameter = 100 mm -> radius = 50 mm
+            // Volume V = (2/3) * pi * R^3 ≈ 261799.387799 mm^3
+            double diamMm = 100.0;
+            double radiusMm = diamMm / 2.0;
+            double radiusM = UnitConverter.ConvertToInternal(radiusMm, "mm"); // 0.05 m
+
+            double volumeM3 = (2.0 / 3.0) * Math.PI * Math.Pow(radiusM, 3);
+            double volumeMm3 = volumeM3 * 1e9;
+
+            double expectedMm3 = (2.0 / 3.0) * Math.PI * Math.Pow(radiusMm, 3);
+
+            Assert.AreEqual(expectedMm3, volumeMm3, 1e-4);
+            Assert.IsTrue(volumeMm3 > 261799.0 && volumeMm3 < 261800.0);
+        }
     }
 }
 

@@ -268,6 +268,149 @@ namespace AICADAssistant.Tests
             var result = _validator.Validate(spec);
             Assert.IsFalse(result.IsValid);
         }
+
+        [TestMethod]
+        public void Validate_CreateHemisphere_ValidDiameter_ReturnsValid()
+        {
+            var spec = new CadSpec
+            {
+                DocumentType = DocumentType.Part,
+                Units = "mm",
+                Operations = new List<CadOperation>
+                {
+                    new CadOperation
+                    {
+                        Id = "hemi1",
+                        Type = OperationType.CreateHemisphere,
+                        Parameters = new Dictionary<string, object>
+                        {
+                            { "diameter", 100.0 },
+                            { "plane", "Front" }
+                        }
+                    }
+                }
+            };
+            var result = _validator.Validate(spec);
+            Assert.IsTrue(result.IsValid, string.Join(", ", result.Errors));
+        }
+
+        [TestMethod]
+        public void Validate_CreateHemisphere_ValidRadius_ReturnsValid()
+        {
+            var spec = new CadSpec
+            {
+                DocumentType = DocumentType.Part,
+                Units = "mm",
+                Operations = new List<CadOperation>
+                {
+                    new CadOperation
+                    {
+                        Id = "hemi1",
+                        Type = OperationType.CreateHemisphere,
+                        Parameters = new Dictionary<string, object>
+                        {
+                            { "radius", 50.0 }
+                        }
+                    }
+                }
+            };
+            var result = _validator.Validate(spec);
+            Assert.IsTrue(result.IsValid, string.Join(", ", result.Errors));
+        }
+
+        [TestMethod]
+        public void Validate_CreateHemisphere_ZeroOrNegativeDiameter_ReturnsInvalid()
+        {
+            var spec = new CadSpec
+            {
+                DocumentType = DocumentType.Part,
+                Units = "mm",
+                Operations = new List<CadOperation>
+                {
+                    new CadOperation
+                    {
+                        Id = "hemi1",
+                        Type = OperationType.CreateHemisphere,
+                        Parameters = new Dictionary<string, object>
+                        {
+                            { "diameter", -100.0 }
+                        }
+                    }
+                }
+            };
+            var result = _validator.Validate(spec);
+            Assert.IsFalse(result.IsValid);
+            Assert.IsTrue(result.Errors.Count > 0);
+        }
+
+        [TestMethod]
+        public void Validate_CreateHemisphere_MissingDimensions_ReturnsInvalid()
+        {
+            var spec = new CadSpec
+            {
+                DocumentType = DocumentType.Part,
+                Units = "mm",
+                Operations = new List<CadOperation>
+                {
+                    new CadOperation
+                    {
+                        Id = "hemi1",
+                        Type = OperationType.CreateHemisphere,
+                        Parameters = new Dictionary<string, object>()
+                    }
+                }
+            };
+            var result = _validator.Validate(spec);
+            Assert.IsFalse(result.IsValid);
+        }
+
+        [TestMethod]
+        public void Validate_RevolvedBoss_ValidAngle_ReturnsValid()
+        {
+            var spec = new CadSpec
+            {
+                DocumentType = DocumentType.Part,
+                Units = "mm",
+                Operations = new List<CadOperation>
+                {
+                    new CadOperation
+                    {
+                        Id = "rev1",
+                        Type = OperationType.RevolvedBoss,
+                        Parameters = new Dictionary<string, object>
+                        {
+                            { "angle", 360.0 }
+                        }
+                    }
+                }
+            };
+            var result = _validator.Validate(spec);
+            Assert.IsTrue(result.IsValid, string.Join(", ", result.Errors));
+        }
+
+        [TestMethod]
+        public void Validate_RevolvedBoss_NegativeAngle_ReturnsInvalid()
+        {
+            var spec = new CadSpec
+            {
+                DocumentType = DocumentType.Part,
+                Units = "mm",
+                Operations = new List<CadOperation>
+                {
+                    new CadOperation
+                    {
+                        Id = "rev1",
+                        Type = OperationType.RevolvedBoss,
+                        Parameters = new Dictionary<string, object>
+                        {
+                            { "angle", -45.0 }
+                        }
+                    }
+                }
+            };
+            var result = _validator.Validate(spec);
+            Assert.IsFalse(result.IsValid);
+        }
     }
 }
 
