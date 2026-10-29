@@ -74,8 +74,11 @@ if ($missingDependencies.Count -gt 0) {
 }
 
 # 4. Daftarkan COM Add-in via 64-bit RegAsm
+# Catatan: Opsi /tlb tidak digunakan karena SOLIDWORKS berkomunikasi melalui antarmuka ISwAddin 
+# yang telah didefinisikan oleh SOLIDWORKS API (swpublished.dll). Ekspor .tlb tidak diperlukan 
+# dan dihindari untuk mencegah konflik ekspor type library unmanaged.
 Write-Host "Mendaftarkan COM Add-in via 64-bit RegAsm..." -ForegroundColor Cyan
-& $regAsmPath $dllPath /codebase /tlb
+& $regAsmPath $dllPath /codebase
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Pendaftaran COM via RegAsm gagal dengan exit code $LASTEXITCODE."
     exit $LASTEXITCODE

@@ -164,5 +164,30 @@
    - **Pemeriksaan Refleksi .NET**: `Assembly.LoadFrom` berhasil memuat tipe `AICADAssistant.AddIn.SwAddIn`, antarmuka `ISwAddin`, GUID `{a1b2c3d4-e5f6-7890-abcd-ef1234567890}`, dan `ComVisible = True`.
    - **Pengujian Loadability RegAsm (Dry-run)**: Pengujian menggunakan `RegAsm.exe /regfile` berhasil dieksekusi dengan **ExitCode 0 (Sukses)** tanpa error RA0000, memverifikasi bahwa utilitas COM loader dapat memuat seluruh dependensi tanpa perlu mengubah Windows Registry.
 
+---
+
+## Tahap 9: Resolusi Kegagalan Type Library Exporter (TlbExp "Element not found")
+
+1. **Analisis Kegagalan Ekspor Type Library**:
+   - Gejala: `Types registered successfully`, diikuti oleh `RegAsm : error RA0000 : Type library exporter encountered an error while processing 'AICADAssistant.AddIn.SwAddIn, AICADAssistant.AddIn'. Error: Element not found.`
+   - Akar masalah:
+     - **Opsi `/tlb` yang Tidak Diperlukan:** `scripts/register_addin.ps1` memanggil `RegAsm.exe` dengan flag `/tlb`. Add-in SOLIDWORKS berbasis .NET sama sekali tidak memerlukan berkas Type Library (`.tlb`) karena SOLIDWORKS berkomunikasi menggunakan antarmuka COM `ISwAddin` yang telah didefinisikan dan diketahui secara native melalui `SolidWorks.Interop.swpublished.dll`.
+     - **Duplikasi GUID (LIBID vs CLSID):** Berkas `AssemblyInfo.cs` memiliki `[assembly: Guid("a1b2c3d4-e5f6-7890-abcd-ef1234567890")]` yang nilainya persis sama dengan GUID kelas `SwAddIn` (`CLSID = a1b2c3d4-e5f6-7890-abcd-ef1234567890`). Dalam COM, identitas pustaka tipe (LIBID) dan identitas kelas (CLSID) tidak boleh identik karena memicu konflik dependensi sirkular pada subsistem TypeLib Windows.
+     - **Visibilitas COM Global (`ComVisible(true)` di AssemblyInfo):** Atribut tingkat perakitan `[assembly: ComVisible(true)]` mengekspos semua kelas publik di assembly (termasuk kelas WPF ViewModels, `RelayCommand`, dan `IValueConverter`) ke eksportir COM. Karena tipe WPF tersebut tidak memiliki deskripsi antarmuka COM, eksportir type library mengalami kegagalan resolusi metadata (`TYPE_E_ELEMENTNOTFOUND`).
+2. **Perbaikan Kode & Metadata Assembly**:
+   - `src/AICADAssistant.AddIn/Properties/AssemblyInfo.cs`:
+     - Mengubah visibilitas default perakitan menjadi `[assembly: ComVisible(false)]`. Dengan demikian, hanya tipe yang didekorasi eksplisit dengan `[ComVisible(true)]` (`SwAddIn`) yang diekspos ke subsistem COM.
+     - Mengganti GUID perakitan (LIBID) dengan pengenal unik terpisah: `[assembly: Guid("f2c1b0a9-8e7d-6c5b-4a32-10fedcba9876")]`, menghilangkan tabrakan identitas dengan CLSID kelas.
+   - `src/AICADAssistant.AddIn/AddInEntryPoint.cs`:
+     - Mempertahankan CLSID add-in resmi: `[Guid("a1b2c3d4-e5f6-7890-abcd-ef1234567890")]` dan implementasi `ISwAddin` dengan `[ClassInterface(ClassInterfaceType.None)]`.
+   - `scripts/register_addin.ps1`:
+     - Menghapus opsi `/tlb` dari pemanggilan `RegAsm.exe`, sehingga perintah pendaftaran menjadi:
+       `& $regAsmPath $dllPath /codebase`
+3. **Verifikasi & Validasi**:
+   - **Kompilasi MSBuild**: Berhasil 100% (0 error).
+   - **Unit Tests**: 44/44 unit test lolos (100% passed).
+   - **Validasi RegAsm Dry-run**: Pengujian simulasi pembuatan registri via `RegAsm.exe $dllPath /codebase /regfile:...` menghasilkan berkas registri CLSID murni untuk `SwAddIn` dengan **ExitCode 0 (Sukses)** tanpa memanggil TlbExp dan tanpa error RA0000.
+
+
 
 
