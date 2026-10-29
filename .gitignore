@@ -1,0 +1,32 @@
+# Build output
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# Local configuration (contains secrets)
+*.local.config
+appsettings.local.json
+local.settings.json
+AICADAssistant.config.json
+
+# Logs
+logs/
+*.log
+
+# NuGet
+*.nupkg
+packages/
+
+# Test results
+TestResults/
+
+# Windows thumbnails
+Thumbs.db
+Desktop.ini
+
+# IDE
+.idea/
+*.DotSettings.user
+

@@ -1,0 +1,141 @@
+<Window x:Class="AICADAssistant.AddIn.UI.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        Title="Pengaturan AI CAD Assistant"
+        Height="540" Width="480"
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="NoResize"
+        Background="#F5F5F5"
+        FontFamily="Segoe UI" FontSize="12">
+
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="Themes/RedWhiteTheme.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <Border Grid.Row="0" Background="{StaticResource DarkRedBrush}" CornerRadius="4" Padding="12,10" Margin="0,0,0,12">
+            <TextBlock Text="Konfigurasi AI CAD Assistant" FontWeight="Bold" FontSize="14" Foreground="White" />
+        </Border>
+
+        <!-- Form Content -->
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+
+                <!-- Gemini API Key Section -->
+                <GroupBox Header="Google Gemini API Key" FontWeight="SemiBold" Margin="0,0,0,10">
+                    <StackPanel Margin="10">
+                        <TextBlock Text="Status API Key:" FontWeight="Normal" Margin="0,0,0,4" />
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                            <Ellipse Width="10" Height="10" Margin="0,0,6,0">
+                                <Ellipse.Style>
+                                    <Style TargetType="Ellipse">
+                                        <Setter Property="Fill" Value="Red" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HasApiKey}" Value="True">
+                                                <Setter Property="Fill" Value="#28A745" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Ellipse.Style>
+                            </Ellipse>
+                            <TextBlock FontWeight="Normal">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Belum Tersimpan" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HasApiKey}" Value="True">
+                                                <Setter Property="Text" Value="Tersimpan Aman (Windows DPAPI)" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+
+                        <TextBlock Text="Masukkan / Perbarui API Key:" FontWeight="Normal" Margin="0,0,0,4" />
+                        <PasswordBox x:Name="ApiKeyBox" Height="26" Margin="0,0,0,8" />
+
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="Simpan API Key" Style="{StaticResource PrimaryButtonStyle}" Click="OnSaveApiKeyClicked" Margin="0,0,8,0" />
+                            <Button Content="Hapus Key" Style="{StaticResource SecondaryButtonStyle}" Command="{Binding DeleteApiKeyCommand}" Margin="0,0,8,0" />
+                            <Button Content="Uji Koneksi" Style="{StaticResource SecondaryButtonStyle}" Command="{Binding TestConnectionCommand}" />
+                        </StackPanel>
+                    </StackPanel>
+                </GroupBox>
+
+                <!-- Model & Unit Section -->
+                <GroupBox Header="Preferensi Model &amp; Satuan" FontWeight="SemiBold" Margin="0,0,0,10">
+                    <Grid Margin="10">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="130" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Model Gemini:" FontWeight="Normal" VerticalAlignment="Center" Margin="0,0,0,8" />
+                        <ComboBox Grid.Row="0" Grid.Column="1" ItemsSource="{Binding AvailableModels}" SelectedItem="{Binding GeminiModel}" Margin="0,0,0,8" Height="26" />
+
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Satuan Default:" FontWeight="Normal" VerticalAlignment="Center" />
+                        <ComboBox Grid.Row="1" Grid.Column="1" ItemsSource="{Binding AvailableUnits}" SelectedItem="{Binding DefaultUnit}" Height="26" />
+                    </Grid>
+                </GroupBox>
+
+                <!-- Storage & Performance Section -->
+                <GroupBox Header="Penyimpanan &amp; Kinerja" FontWeight="SemiBold">
+                    <Grid Margin="10">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="130" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Folder Output:" FontWeight="Normal" VerticalAlignment="Center" Margin="0,0,0,8" />
+                        <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding OutputDirectory}" Margin="0,0,8,8" Height="26" />
+                        <Button Grid.Row="0" Grid.Column="2" Content="..." Command="{Binding BrowseDirectoryCommand}" Style="{StaticResource SecondaryButtonStyle}" Margin="0,0,0,8" Width="30" />
+
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Batas Waktu (detik):" FontWeight="Normal" VerticalAlignment="Center" Margin="0,0,0,8" />
+                        <TextBox Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Text="{Binding RequestTimeoutSeconds}" Margin="0,0,0,8" Height="26" />
+
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Maksimal Percobaan:" FontWeight="Normal" VerticalAlignment="Center" />
+                        <TextBox Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Text="{Binding MaxRetryAttempts}" Height="26" />
+                    </Grid>
+                </GroupBox>
+
+                <!-- Status Message -->
+                <TextBlock Text="{Binding ConnectionStatus}" Foreground="{StaticResource DarkRedBrush}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,6,0,0" />
+
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Footer Actions -->
+        <Border Grid.Row="2" Margin="0,12,0,0" Padding="0,8,0,0" BorderBrush="{StaticResource MediumGrayBrush}" BorderThickness="0,1,0,0">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Simpan Pengaturan" Style="{StaticResource PrimaryButtonStyle}" Click="OnSaveSettingsClicked" Margin="0,0,8,0" />
+                <Button Content="Tutup" Style="{StaticResource SecondaryButtonStyle}" Click="OnCloseClicked" Width="70" />
+            </StackPanel>
+        </Border>
+
+    </Grid>
+</Window>
