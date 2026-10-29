@@ -16,3 +16,4 @@ if (-not (Test-Path $testExe)) {
 Write-Host "Menjalankan Test Suite..." -ForegroundColor Cyan
 & $testExe
 exit $LASTEXITCODE
+

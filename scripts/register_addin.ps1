@@ -57,3 +57,4 @@ try {
 
 Write-Host "`n✓ AI CAD Assistant BERHASIL didaftarkan!" -ForegroundColor Green
 Write-Host "Silakan buka SOLIDWORKS -> Tools -> Add-Ins untuk mengaktifkan." -ForegroundColor Cyan
+

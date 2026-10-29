@@ -64,14 +64,14 @@ Suite unit test berjalan secara terisolasi tanpa memerlukan sesi live SOLIDWORKS
 ```powershell
 .\scripts\run_tests.ps1
 ```
-*Hasil: 39 unit test lolos (100% passed).*
+*Hasil: 44 unit test lolos (100% passed, 0 error).*
 
 ---
 
 ## 🔌 Pendaftaran Add-in ke SOLIDWORKS
 
 Untuk mendaftarkan add-in agar muncul pada daftar Add-Ins SOLIDWORKS:
-1. Buka PowerShell (sebagai Administrator jika ingin registrasi sistem HKLM).
+1. Buka PowerShell (sebagai Administrator jika ingin registrasi sistem HKLM, atau user biasa untuk HKCU).
 2. Jalankan perintah:
    ```powershell
    .\scripts\register_addin.ps1
@@ -86,9 +86,11 @@ Untuk menghapus registrasi:
 
 ---
 
-## ⚙️ Konfigurasi Gemini API Key
+## ⚙️ Konfigurasi Model & Gemini API Key
 
 1. Klik tombol roda gigi (⚙) di header panel Task Pane AI CAD Assistant.
 2. Masukkan API Key Google Gemini Anda di kolom input yang aman.
-3. Klik **Simpan API Key**. Key disimpan secara terenkripsi menggunakan Windows DPAPI di profil pengguna Windows Anda.
-4. Klik **Uji Koneksi** untuk memverifikasi komunikasi ke server Google Gemini.
+3. Pilih model Gemini yang diinginkan (default: `gemini-3.8-flash`, atau model alternatif seperti `gemini-3.5-flash-lite`, `gemini-2.5-pro`, dsb.). Kolom nama model dapat diedit secara bebas.
+4. Klik **Simpan Pengaturan**. Key disimpan secara terenkripsi menggunakan Windows DPAPI di profil pengguna Windows Anda (`%APPDATA%\AICADAssistant\credential.dat`).
+5. Klik **Uji Koneksi** untuk memverifikasi komunikasi dan status model ke server Google Gemini.
+

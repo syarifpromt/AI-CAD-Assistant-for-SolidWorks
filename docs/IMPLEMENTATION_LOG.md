@@ -2,7 +2,7 @@
 
 **Proyek:** AI CAD Assistant for SOLIDWORKS  
 **Tanggal Mulai:** 29 Oktober 2026  
-**Status Solusi:** Berhasil dikompilasi (0 Error), 39/39 Unit Test Berhasil  
+**Status Solusi:** Berhasil dikompilasi (0 Error), 44/44 Unit Test Berhasil (100% Passed)  
 
 ---
 
@@ -92,10 +92,49 @@
 
 ---
 
-## Tahap 6: Skrip Pembantu & Verifikasi Akhir
+## Tahap 6: Skrip Pembantu & Verifikasi Awal
 
 1. `scripts/build.ps1`: Otomasi kompilasi solusi via MSBuild.
 2. `scripts/run_tests.ps1`: Otomasi eksekusi test suite.
 3. `scripts/register_addin.ps1`: Pendaftaran COM add-in ke registri SOLIDWORKS.
 4. `scripts/unregister_addin.ps1`: Pembersihan registri add-in.
 5. Verifikasi build: Solusi terkompilasi 100% sukses tanpa error.
+
+---
+
+## Tahap 7: Peningkatan Konfigurasi Gemini & Validasi Model Terverifikasi
+
+1. **Evaluasi & Pemilihan Model Gemini**:
+   - Berdasarkan dokumentasi resmi Google Gemini API (`https://ai.google.dev/gemini-api/docs/models`), model lama yang telah dihentikan/usang (`gemini-1.5-pro`, `gemini-1.5-flash`, `gemini-2.0-flash`) dihapus dari konfigurasi default.
+   - Mengevaluasi dan menetapkan `gemini-3.8-flash` sebagai model utama default (seimbang antara latensi cepat, penalaran arsitektur perangkat lunak jangka panjang, dan dukungan structured JSON output).
+   - Menyediakan pilihan model aktif terverifikasi:
+     - `gemini-3.8-flash` (Default)
+     - `gemini-3.5-flash-lite` (Latensi ultra-rendah untuk pengenalan dokumen/sketsa gambar)
+     - `gemini-3.1-pro-preview` (Penalaran multi-langkah dan agen tingkat lanjut)
+     - `gemini-2.5-pro` (Model penalaran stabil berakurasi tinggi)
+     - `gemini-2.5-flash` (Model hybrid cepat dan serbaguna)
+     - `gemini-flash-latest` (Penunjuk alias otomatis ke rilis Flash terbaru)
+2. **Pemisahan Konfigurasi Model Tanpa Mengubah CAD Engine**:
+   - `SettingsWindow.xaml`: Mengubah `ComboBox` pemilihan model menjadi `IsEditable="True"` dengan two-way binding ke `GeminiModel`, sehingga pengguna dapat memilih dari daftar rekomendasi atau mengetik nama model custom apa pun tanpa perlu mengubah kode sumber C# CAD Engine.
+   - `AppSettings.cs`: Menetapkan `DefaultGeminiModel = "gemini-3.8-flash"` serta logika auto-migrasi saat membaca konfigurasi lama agar otomatis berpindah dari model usang ke `gemini-3.8-flash`.
+   - `GeminiClient.cs`: Menjadikan `CurrentModel` dinamis membaca konfigurasi aktif `_settings.GeminiModel` setiap kali request dipersiapkan.
+3. **Penyempurnaan Payload & Penanganan Error REST API**:
+   - Memperbaiki serialisasi request JSON agar mengecualikan field bernilai `null` (`nullValueHandling = Ignore`), mencegah penolakan payload oleh endpoint `v1beta`.
+   - Memperkaya `GeminiException` dengan penanganan terstruktur:
+     - HTTP 404 / `NOT_FOUND`: `ModelNotFoundException` dengan pesan jelas bahwa model tidak tersedia atau salah ketik.
+     - HTTP 401 / 403 / `UNAUTHENTICATED`: `AuthException` dengan panduan periksa API Key.
+     - HTTP 429 / `RESOURCE_EXHAUSTED`: `RateLimitException` dengan petunjuk kuota habis.
+     - Timeout: `TimeoutException` dengan detail durasi timeout.
+   - Menambahkan metode `TestConnectionDetailedAsync()` pada `GeminiClient` dan `SettingsViewModel` untuk pelaporan status koneksi yang informatif langsung di antarmuka pengguna.
+4. **Pencegahan Kebocoran Kredensial**:
+   - `LoggingService.cs`: Mengimplementasikan metode `RedactApiKey()` yang memindai dan menyamarkan parameter URL (`?key=...`) dan string API key Google (`AIzaSy...`) menjadi `[REDACTED_API_KEY]` sebelum ditulis ke file log atau dipaparkan ke antarmuka pengguna.
+5. **Ekspansi Test Suite Otomatis**:
+   - Menambahkan 5 pengujian baru di `AICADAssistant.Tests/GeminiClientTests.cs`:
+     - Verifikasi model default `gemini-3.8-flash`.
+     - Pengujian pergantian model dinamis.
+     - Pengujian penanganan error HTTP 404 Model Not Found.
+     - Pengujian fungsi `TestConnectionDetailedAsync` dan respons status.
+     - Pengujian sanitasi redaksi API key pada `LoggingService`.
+   - **Hasil Akhir Test**: 44/44 unit test lolos (100% passed, 0 failed, waktu eksekusi: 220 ms).
+
+

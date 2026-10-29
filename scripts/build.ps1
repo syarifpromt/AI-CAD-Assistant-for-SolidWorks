@@ -27,3 +27,4 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "✗ Build Gagal!" -ForegroundColor Red
     exit $LASTEXITCODE
 }
+

@@ -32,3 +32,4 @@ try {
 } catch {}
 
 Write-Host "✓ AI CAD Assistant berhasil dihapus dari registrasi SOLIDWORKS." -ForegroundColor Green
+

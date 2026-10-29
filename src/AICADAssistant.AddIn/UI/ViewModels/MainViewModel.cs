@@ -266,7 +266,16 @@ namespace AICADAssistant.AddIn.UI.ViewModels
             catch (GeminiException ex)
             {
                 Messages.Add(ConversationMessage.ErrorMessage(ex.Message));
-                OperationStatus = "Error Gemini API";
+                if (ex.IsModelNotFound)
+                    OperationStatus = "Model Gemini Tidak Ditemukan";
+                else if (ex.IsAuthError)
+                    OperationStatus = "API Key Tidak Valid";
+                else if (ex.IsRateLimit)
+                    OperationStatus = "Batas Kuota Tercapai";
+                else if (ex.IsTimeout)
+                    OperationStatus = "Batas Waktu Habis";
+                else
+                    OperationStatus = "Error Gemini API";
                 StatusType = OperationStatusType.Failed;
             }
             catch (OperationCanceledException)
@@ -361,7 +370,16 @@ namespace AICADAssistant.AddIn.UI.ViewModels
             catch (GeminiException ex)
             {
                 Messages.Add(ConversationMessage.ErrorMessage(ex.Message));
-                OperationStatus = "Error Analisis";
+                if (ex.IsModelNotFound)
+                    OperationStatus = "Model Gemini Tidak Ditemukan";
+                else if (ex.IsAuthError)
+                    OperationStatus = "API Key Tidak Valid";
+                else if (ex.IsRateLimit)
+                    OperationStatus = "Batas Kuota Tercapai";
+                else if (ex.IsTimeout)
+                    OperationStatus = "Batas Waktu Habis";
+                else
+                    OperationStatus = "Error Analisis";
                 StatusType = OperationStatusType.Failed;
             }
             catch (OperationCanceledException)

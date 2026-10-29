@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Text.RegularExpressions;
 
 namespace AICADAssistant.Core.Services
 {
@@ -45,18 +46,34 @@ namespace AICADAssistant.Core.Services
             }
         }
 
+        public static string RedactApiKey(string input)
+        {
+            if (string.IsNullOrEmpty(input))
+                return input;
+
+            // Redact URL query parameter e.g. key=AIzaSy... or ?key=... or &key=...
+            string sanitized = Regex.Replace(input, @"([?&]key=)[^&""'\s]+", "$1[REDACTED]");
+
+            // Redact standard Google API Key pattern (AIzaSy...)
+            sanitized = Regex.Replace(sanitized, @"AIzaSy[A-Za-z0-9_\-]+", "[REDACTED_API_KEY]");
+
+            return sanitized;
+        }
+
         public void Log(string level, string message, Exception ex = null)
         {
             try
             {
+                string safeMessage = RedactApiKey(message);
                 string fileName = string.Format("aicad_{0:yyyyMMdd}.log", DateTime.Now);
                 string filePath = Path.Combine(_logDirectory, fileName);
                 string timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff");
 
-                string logLine = string.Format("[{0}] [{1}] {2}", timestamp, level.ToUpperInvariant(), message);
+                string logLine = string.Format("[{0}] [{1}] {2}", timestamp, level.ToUpperInvariant(), safeMessage);
                 if (ex != null)
                 {
-                    logLine += Environment.NewLine + string.Format("   Exception: {0}: {1}", ex.GetType().Name, ex.Message);
+                    string safeExMessage = RedactApiKey(ex.Message);
+                    logLine += Environment.NewLine + string.Format("   Exception: {0}: {1}", ex.GetType().Name, safeExMessage);
                 }
 
                 lock (LockObj)

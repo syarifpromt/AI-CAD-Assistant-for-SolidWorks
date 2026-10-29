@@ -54,3 +54,4 @@ Bagi lingkungan dengan SOLIDWORKS 2023 atau 2024:
 6. Buat part sederhana dengan mengetikkan: *"Buat balok 100x50x20 mm"*.
 7. Tekan tombol **Kirim**, periksa rencana CAD yang dihasilkan, lalu tekan **Buat Model**.
 8. Pastikan model balok terbentuk pada layar grafis SOLIDWORKS dan status rebuild berhasil (tanpa error di Feature Tree).
+

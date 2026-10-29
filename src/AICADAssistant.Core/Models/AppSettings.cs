@@ -9,6 +9,8 @@ namespace AICADAssistant.Core.Models
     /// </summary>
     public class AppSettings
     {
+        public const string DefaultGeminiModel = "gemini-3.8-flash";
+
         private static readonly string SettingsDirectory =
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AICADAssistant");
 
@@ -27,7 +29,7 @@ namespace AICADAssistant.Core.Models
 
         public AppSettings()
         {
-            GeminiModel = "gemini-1.5-pro";
+            GeminiModel = DefaultGeminiModel;
             DefaultUnit = "mm";
             OutputDirectory = "";
             MaxRetryAttempts = 2;
@@ -55,11 +57,22 @@ namespace AICADAssistant.Core.Models
 
                 var serializer = new JavaScriptSerializer();
                 var loaded = serializer.Deserialize<AppSettings>(json);
-                return loaded ?? new AppSettings();
+                if (loaded == null)
+                    return new AppSettings();
+
+                // If loaded model is empty or obsolete, default to verified model
+                if (string.IsNullOrWhiteSpace(loaded.GeminiModel) ||
+                    loaded.GeminiModel == "gemini-1.5-pro" ||
+                    loaded.GeminiModel == "gemini-1.5-flash" ||
+                    loaded.GeminiModel == "gemini-2.0-flash")
+                {
+                    loaded.GeminiModel = DefaultGeminiModel;
+                }
+
+                return loaded;
             }
             catch
             {
-                // Return defaults rather than crashing on corrupt settings.
                 return new AppSettings();
             }
         }

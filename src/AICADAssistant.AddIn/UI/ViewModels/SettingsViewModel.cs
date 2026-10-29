@@ -98,9 +98,12 @@ namespace AICADAssistant.AddIn.UI.ViewModels
 
             AvailableModels = new ObservableCollection<string>
             {
-                "gemini-1.5-pro",
-                "gemini-1.5-flash",
-                "gemini-2.0-flash"
+                "gemini-3.8-flash",
+                "gemini-3.5-flash-lite",
+                "gemini-3.1-pro-preview",
+                "gemini-2.5-pro",
+                "gemini-2.5-flash",
+                "gemini-flash-latest"
             };
 
             AvailableUnits = new ObservableCollection<string>
@@ -110,7 +113,10 @@ namespace AICADAssistant.AddIn.UI.ViewModels
                 "in"
             };
 
-            GeminiModel = settings.GeminiModel;
+            GeminiModel = !string.IsNullOrWhiteSpace(settings.GeminiModel)
+                ? settings.GeminiModel
+                : AppSettings.DefaultGeminiModel;
+
             DefaultUnit = settings.DefaultUnit;
             OutputDirectory = string.IsNullOrWhiteSpace(settings.OutputDirectory)
                 ? AppSettings.GetDefaultOutputDirectory()
@@ -128,14 +134,18 @@ namespace AICADAssistant.AddIn.UI.ViewModels
 
         public void SaveSettings()
         {
-            _settings.GeminiModel = GeminiModel;
+            string cleanModel = string.IsNullOrWhiteSpace(GeminiModel)
+                ? AppSettings.DefaultGeminiModel
+                : GeminiModel.Trim();
+
+            _settings.GeminiModel = cleanModel;
             _settings.DefaultUnit = DefaultUnit;
             _settings.OutputDirectory = OutputDirectory;
             _settings.RequestTimeoutSeconds = RequestTimeoutSeconds;
             _settings.MaxRetryAttempts = MaxRetryAttempts;
             _settings.Save();
 
-            ConnectionStatus = "Pengaturan berhasil disimpan.";
+            ConnectionStatus = string.Format("Pengaturan berhasil disimpan. Model aktif: '{0}'.", cleanModel);
         }
 
         public void SaveApiKey()
@@ -162,18 +172,16 @@ namespace AICADAssistant.AddIn.UI.ViewModels
         public async System.Threading.Tasks.Task TestConnectionAsync()
         {
             IsTesting = true;
-            ConnectionStatus = "Menghubungi Gemini API...";
+            ConnectionStatus = "Menghubungi Google Gemini API...";
 
             try
             {
-                bool success = await _geminiClient.TestConnectionAsync();
-                ConnectionStatus = success
-                    ? "✓ Koneksi ke Google Gemini API Berhasil!"
-                    : "✗ Gagal terhubung ke Gemini API. Periksa API Key dan internet Anda.";
+                var result = await _geminiClient.TestConnectionDetailedAsync();
+                ConnectionStatus = result.Message;
             }
             catch (Exception ex)
             {
-                ConnectionStatus = "Error koneksi: " + ex.Message;
+                ConnectionStatus = "Error koneksi: " + LoggingService.RedactApiKey(ex.Message);
             }
             finally
             {

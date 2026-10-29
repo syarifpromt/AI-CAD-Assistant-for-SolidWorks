@@ -37,3 +37,4 @@ namespace AICADAssistant.AddIn.UI
         }
     }
 }
+

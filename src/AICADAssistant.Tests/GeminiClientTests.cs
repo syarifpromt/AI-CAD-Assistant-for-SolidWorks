@@ -17,11 +17,11 @@ namespace AICADAssistant.Tests
         [TestInitialize]
         public void Setup()
         {
-            _tempCredFile = Path.Combine(Path.GetTempPath(), "test_cred_" + Guid.NewGuid().ToString() + ".dat");
+            _tempCredFile = Path.Combine(Path.GetTempPath(), "test_cred_" + Guid.NewGuid().ToString("N") + ".dat");
             _credentialService = new CredentialService(_tempCredFile);
             _settings = new AppSettings
             {
-                GeminiModel = "gemini-1.5-flash",
+                GeminiModel = AppSettings.DefaultGeminiModel,
                 RequestTimeoutSeconds = 5
             };
         }
@@ -49,26 +49,80 @@ namespace AICADAssistant.Tests
         }
 
         [TestMethod]
+        public void GeminiClient_WithoutApiKey_DetailedTestReturnsInformativeMessage()
+        {
+            var client = new GeminiClient(_credentialService, _settings);
+            var detailed = client.TestConnectionDetailedAsync().Result;
+            Assert.IsFalse(detailed.Success);
+            Assert.IsTrue(detailed.Message.Contains("API Key belum"));
+        }
+
+        [TestMethod]
+        public void GeminiClient_DefaultModel_IsGemini38Flash()
+        {
+            var settings = new AppSettings();
+            var client = new GeminiClient(_credentialService, settings);
+            Assert.AreEqual("gemini-3.8-flash", client.CurrentModel);
+        }
+
+        [TestMethod]
+        public void GeminiClient_CustomModel_IsUsedInCurrentModel()
+        {
+            var settings = new AppSettings { GeminiModel = "gemini-3.5-flash-lite" };
+            var client = new GeminiClient(_credentialService, settings);
+            Assert.AreEqual("gemini-3.5-flash-lite", client.CurrentModel);
+
+            // Change model dynamically without recreating client or changing CAD engine
+            settings.GeminiModel = "gemini-custom-enterprise";
+            Assert.AreEqual("gemini-custom-enterprise", client.CurrentModel);
+        }
+
+        [TestMethod]
         public void GeminiException_RateLimit_FlagsSetProperly()
         {
-            var ex = GeminiException.RateLimitException();
+            var ex = GeminiException.RateLimitException("quota exceeded");
             Assert.IsTrue(ex.IsRateLimit);
             Assert.AreEqual(429, ex.StatusCode);
+            Assert.AreEqual("RESOURCE_EXHAUSTED", ex.ServerStatus);
         }
 
         [TestMethod]
         public void GeminiException_Timeout_FlagsSetProperly()
         {
-            var ex = GeminiException.TimeoutException();
+            var ex = GeminiException.TimeoutException(45);
             Assert.IsTrue(ex.IsTimeout);
+            Assert.IsTrue(ex.Message.Contains("45 detik"));
         }
 
         [TestMethod]
         public void GeminiException_Auth_FlagsSetProperly()
         {
-            var ex = GeminiException.AuthException();
+            var ex = GeminiException.AuthException("invalid key");
             Assert.IsTrue(ex.IsAuthError);
             Assert.AreEqual(401, ex.StatusCode);
+        }
+
+        [TestMethod]
+        public void GeminiException_ModelNotFound_FlagsSetProperly()
+        {
+            var ex = GeminiException.ModelNotFoundException("gemini-invalid-model", "models/gemini-invalid-model not found");
+            Assert.IsTrue(ex.IsModelNotFound);
+            Assert.AreEqual(404, ex.StatusCode);
+            Assert.IsTrue(ex.Message.Contains("gemini-invalid-model"));
+        }
+
+        [TestMethod]
+        public void LoggingService_RedactApiKey_SanitizesSensitiveKeys()
+        {
+            string urlWithKey = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=AIzaSyA1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6";
+            string redacted = LoggingService.RedactApiKey(urlWithKey);
+
+            Assert.IsFalse(redacted.Contains("AIzaSyA1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6"));
+            Assert.IsTrue(redacted.Contains("key=[REDACTED]"));
+
+            string plainKeyInText = "Exception with key AIzaSyA1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6 inside message";
+            string redactedPlain = LoggingService.RedactApiKey(plainKeyInText);
+            Assert.IsFalse(redactedPlain.Contains("AIzaSyA1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6"));
         }
     }
 }

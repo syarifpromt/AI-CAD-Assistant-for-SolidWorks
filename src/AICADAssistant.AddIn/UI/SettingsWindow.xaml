@@ -90,7 +90,7 @@
                         </Grid.ColumnDefinitions>
 
                         <TextBlock Grid.Row="0" Grid.Column="0" Text="Model Gemini:" FontWeight="Normal" VerticalAlignment="Center" Margin="0,0,0,8" />
-                        <ComboBox Grid.Row="0" Grid.Column="1" ItemsSource="{Binding AvailableModels}" SelectedItem="{Binding GeminiModel}" Margin="0,0,0,8" Height="26" />
+                        <ComboBox Grid.Row="0" Grid.Column="1" IsEditable="True" ItemsSource="{Binding AvailableModels}" Text="{Binding GeminiModel}" Margin="0,0,0,8" Height="26" ToolTip="Pilih model dari daftar atau ketikkan identifier model Gemini kustom" />
 
                         <TextBlock Grid.Row="1" Grid.Column="0" Text="Satuan Default:" FontWeight="Normal" VerticalAlignment="Center" />
                         <ComboBox Grid.Row="1" Grid.Column="1" ItemsSource="{Binding AvailableUnits}" SelectedItem="{Binding DefaultUnit}" Height="26" />
