@@ -31,12 +31,14 @@ namespace AICADAssistant.Core.Gemini
         public double temperature { get; set; }
         public int maxOutputTokens { get; set; }
         public string responseMimeType { get; set; }
+        public string thinkingLevel { get; set; }
 
         public GeminiGenerationConfig()
         {
             temperature = 0.2;
             maxOutputTokens = 4096;
-            responseMimeType = "application/json";
+            responseMimeType = null; // Default to natural text; set explicitly to "application/json" for CAD plans
+            thinkingLevel = "low";
         }
     }
 

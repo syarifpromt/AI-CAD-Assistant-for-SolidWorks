@@ -11,7 +11,8 @@ $ErrorActionPreference = "Stop"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $solutionPath = Join-Path (Split-Path -Parent $scriptDir) "AICADAssistant.sln"
-$msBuildPath = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\MSBuild.exe"
+$vsBuildTools = "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\MSBuild\Current\Bin\MSBuild.exe"
+$msBuildPath = if (Test-Path $vsBuildTools) { $vsBuildTools } else { "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\MSBuild.exe" }
 
 if (-not (Test-Path $msBuildPath)) {
     Write-Error "MSBuild not found at: $msBuildPath"

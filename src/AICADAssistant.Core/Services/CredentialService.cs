@@ -15,19 +15,26 @@ namespace AICADAssistant.Core.Services
         private readonly string _credentialFilePath;
 
         public CredentialService()
+            : this(null)
         {
-            string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            string folder = Path.Combine(appData, "AICADAssistant");
-            if (!Directory.Exists(folder))
-            {
-                Directory.CreateDirectory(folder);
-            }
-            _credentialFilePath = Path.Combine(folder, "credential.dat");
         }
 
         public CredentialService(string customCredentialPath)
         {
-            _credentialFilePath = customCredentialPath;
+            if (!string.IsNullOrWhiteSpace(customCredentialPath))
+            {
+                _credentialFilePath = customCredentialPath.Trim();
+            }
+            else
+            {
+                string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+                string folder = Path.Combine(appData, "AICADAssistant");
+                if (!Directory.Exists(folder))
+                {
+                    Directory.CreateDirectory(folder);
+                }
+                _credentialFilePath = Path.Combine(folder, "credential.dat");
+            }
         }
 
         public void SaveApiKey(string apiKey)
@@ -40,6 +47,12 @@ namespace AICADAssistant.Core.Services
 
             try
             {
+                string dir = Path.GetDirectoryName(_credentialFilePath);
+                if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                {
+                    Directory.CreateDirectory(dir);
+                }
+
                 byte[] plainBytes = Encoding.UTF8.GetBytes(apiKey.Trim());
                 byte[] cipherBytes = ProtectedData.Protect(plainBytes, Entropy, DataProtectionScope.CurrentUser);
                 File.WriteAllBytes(_credentialFilePath, cipherBytes);

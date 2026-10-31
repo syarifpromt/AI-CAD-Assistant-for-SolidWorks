@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">x64</Platform>
+    <ProjectGuid>{B2C3D4E5-F6A7-8901-BCDE-F12345678901}</ProjectGuid>
+    <OutputType>Library</OutputType>
+    <AppDesignerFolder>Properties</AppDesignerFolder>
+    <RootNamespace>AICADAssistant.Core</RootNamespace>
+    <AssemblyName>AICADAssistant.Core</AssemblyName>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <FileAlignment>512</FileAlignment>
+    <Deterministic>true</Deterministic>
+    <LangVersion>default</LangVersion>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|x64' ">
+    <PlatformTarget>x64</PlatformTarget>
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|x64' ">
+    <PlatformTarget>x64</PlatformTarget>
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Net.Http" />
+    <Reference Include="System.Runtime.Serialization" />
+    <Reference Include="System.Security" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Web.Extensions" />
+    <Reference Include="Microsoft.CSharp" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="Models\CadSpec.cs" />
+    <Compile Include="Models\CadOperation.cs" />
+    <Compile Include="Models\ModelContextSnapshot.cs" />
+    <Compile Include="Models\PendingCadTask.cs" />
+    <Compile Include="Models\OperationCatalog.cs" />
+    <Compile Include="Models\OperationResult.cs" />
+    <Compile Include="Models\ConversationMessage.cs" />
+    <Compile Include="Models\AppSettings.cs" />
+    <Compile Include="Models\Contracts\CADBrief.cs" />
+    <Compile Include="Models\Contracts\ArchitectPlan.cs" />
+    <Compile Include="Models\Contracts\CADProgram.cs" />
+    <Compile Include="Models\Contracts\GeometryReference.cs" />
+    <Compile Include="Models\Contracts\VerificationResult.cs" />
+    <Compile Include="Models\Contracts\CADDiagnostic.cs" />
+    <Compile Include="Tools\ICadTool.cs" />
+    <Compile Include="Tools\CadToolRegistry.cs" />
+    <Compile Include="Sketch\SketchLifecycleManager.cs" />
+    <Compile Include="Sketch\CoordinateTransformer.cs" />
+    <Compile Include="Sketch\ProfileValidator.cs" />
+    <Compile Include="Features\FeatureReliability.cs" />
+    <Compile Include="Features\ThroughHoleBuilder.cs" />
+    <Compile Include="Features\FilletChamferBuilder.cs" />
+    <Compile Include="Gemini\GeminiClient.cs" />
+    <Compile Include="Gemini\GeminiRequest.cs" />
+    <Compile Include="Gemini\GeminiResponse.cs" />
+    <Compile Include="Gemini\GeminiException.cs" />
+    <Compile Include="Gemini\ThinkingLevel.cs" />
+    <Compile Include="CAD\UnitConverter.cs" />
+    <Compile Include="CAD\CadPlanner.cs" />
+    <Compile Include="CAD\CadPlanNormalizer.cs" />
+    <Compile Include="CAD\CadFastPathEngine.cs" />
+    <Compile Include="CAD\CadContextReconciler.cs" />
+    <Compile Include="CAD\IntentClassifier.cs" />
+    <Compile Include="CAD\GeometryVerifier.cs" />
+    <Compile Include="CAD\CadExecutionEngine.cs" />
+    <Compile Include="CAD\SketchBuilder.cs" />
+    <Compile Include="CAD\FeatureBuilder.cs" />
+    <Compile Include="Validation\CadPlanValidator.cs" />
+    <Compile Include="Validation\ValidationResult.cs" />
+    <Compile Include="Services\CredentialService.cs" />
+    <Compile Include="Services\GeminiConnectionService.cs" />
+    <Compile Include="Services\LoggingService.cs" />
+    <Compile Include="Services\ImageService.cs" />
+    <Compile Include="Services\BackupService.cs" />
+    <Compile Include="Properties\AssemblyInfo.cs" />
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>
+

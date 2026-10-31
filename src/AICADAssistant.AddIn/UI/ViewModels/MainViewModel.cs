@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
@@ -13,6 +14,7 @@ using AICADAssistant.Core.Gemini;
 using AICADAssistant.Core.Models;
 using AICADAssistant.Core.Services;
 using AICADAssistant.Core.Validation;
+using System.Windows.Threading;
 
 namespace AICADAssistant.AddIn.UI.ViewModels
 {
@@ -37,7 +39,13 @@ namespace AICADAssistant.AddIn.UI.ViewModels
         private bool _hasAttachedFile;
         private CadSpec _currentCadSpec;
         private string _currentDocumentPath;
+        private readonly Dictionary<string, CadSpec> _documentCadSpecs = new Dictionary<string, CadSpec>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> _documentAliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private PendingCadTask _pendingCadTask;
+        private string _activeDocumentId;
+        private string _activeDocumentTitle;
         private CancellationTokenSource _cts;
+        private string _activeOperationName;
 
         public event PropertyChangedEventHandler PropertyChanged;
 
@@ -146,6 +154,35 @@ namespace AICADAssistant.AddIn.UI.ViewModels
             set { _currentDocumentPath = value; OnPropertyChanged("CurrentDocumentPath"); }
         }
 
+        public string AppVersionDisplay
+        {
+            get
+            {
+                var ver = typeof(MainViewModel).Assembly.GetName().Version;
+                return string.Format("v{0}.{1}.{2}", ver.Major, ver.Minor, ver.Build);
+            }
+        }
+
+        public GeminiConnectionStatus ConnectionStatus
+        {
+            get { return GeminiConnectionService.Instance.Status; }
+        }
+
+        public string ConnectionStatusLabel
+        {
+            get { return GeminiConnectionService.Instance.GetStatusLabel(); }
+        }
+
+        public string ActiveModelName
+        {
+            get { return GeminiConnectionService.Instance.ActiveModel; }
+        }
+
+        public long LastResponseLatencyMs
+        {
+            get { return GeminiConnectionService.Instance.LastResponseTimeMs; }
+        }
+
         public ICommand SendMessageCommand { get; private set; }
         public ICommand AnalyzeFileCommand { get; private set; }
         public ICommand BuildModelCommand { get; private set; }
@@ -171,9 +208,31 @@ namespace AICADAssistant.AddIn.UI.ViewModels
             OperationStatus = "Siap";
             StatusType = OperationStatusType.Ready;
 
+            GeminiConnectionService.Instance.StateChanged += (s, e) =>
+            {
+                var dispatcher = System.Windows.Application.Current != null ? System.Windows.Application.Current.Dispatcher : null;
+                if (dispatcher != null && !dispatcher.CheckAccess())
+                {
+                    dispatcher.InvokeAsync(() =>
+                    {
+                        OnPropertyChanged("ConnectionStatus");
+                        OnPropertyChanged("ConnectionStatusLabel");
+                        OnPropertyChanged("ActiveModelName");
+                        OnPropertyChanged("LastResponseLatencyMs");
+                    });
+                }
+                else
+                {
+                    OnPropertyChanged("ConnectionStatus");
+                    OnPropertyChanged("ConnectionStatusLabel");
+                    OnPropertyChanged("ActiveModelName");
+                    OnPropertyChanged("LastResponseLatencyMs");
+                }
+            };
+
             SendMessageCommand = new RelayCommand(async o => await SendMessageAsync(), o => CanSendMessage);
             AnalyzeFileCommand = new RelayCommand(async o => await AnalyzeFileAsync(), o => CanAnalyzeFile);
-            BuildModelCommand = new RelayCommand(async o => await BuildModelAsync(), o => CanBuildModel);
+            BuildModelCommand = new RelayCommand(o => BuildModel(), o => CanBuildModel);
             CancelCommand = new RelayCommand(o => Cancel(), o => CanCancelOperation);
             AttachFileCommand = new RelayCommand(o => AttachFile());
             RemoveAttachmentCommand = new RelayCommand(o => RemoveAttachment());
@@ -191,52 +250,349 @@ namespace AICADAssistant.AddIn.UI.ViewModels
 
             string text = UserInput.Trim();
             UserInput = string.Empty;
+
+            // Prior history MUST only contain messages prior to the current prompt
+            var priorHistory = new List<ConversationMessage>(Messages);
             Messages.Add(ConversationMessage.UserText(text));
 
             IsBusy = true;
+            _activeOperationName = "Menyusun Rencana CAD";
             OperationStatus = "Menyusun Rencana CAD...";
             StatusType = OperationStatusType.Planning;
             _cts = new CancellationTokenSource();
 
+            var overallSw = System.Diagnostics.Stopwatch.StartNew();
+            LoggingService.Instance.LogPipeline("STAGE_1_CHAT_RECEIVED", "SUCCESS",
+                string.Format("Panjang teks: {0}, preview: '{1}'", text.Length, text.Substring(0, Math.Min(40, text.Length))));
+
+            // Live progress timer to keep UI updated with elapsed seconds
+            DispatcherTimer busyTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(1)
+            };
+            busyTimer.Tick += (s, e) =>
+            {
+                if (_isBusy)
+                {
+                    int sec = (int)overallSw.Elapsed.TotalSeconds;
+                    if (!string.IsNullOrEmpty(_activeOperationName))
+                    {
+                        OperationStatus = string.Format("{0}... ({1} dtk)", _activeOperationName, sec);
+                    }
+                }
+            };
+            busyTimer.Start();
+
             try
             {
-                if (!_credentialService.HasApiKey())
+                CadSpec spec = null;
+                HashSet<string> existingCompletedOpIds = null;
+
+                var activeDoc = _swService.GetActiveDocument();
+                string activeDocId = GetDocumentIdentifier(activeDoc);
+                string activeDocTitle = GetDocumentTitle(activeDoc);
+                _activeDocumentId = activeDocId;
+                _activeDocumentTitle = activeDocTitle;
+
+                int activeBodyCount = activeDoc != null ? _swService.GetSolidBodyCount(activeDoc) : 0;
+                double beforeVolume = activeDoc != null ? _swService.GetVolumeMm3(activeDoc) : 0;
+
+                // Document Context Isolation & Persistence (P0):
+                // A blank document (activeBodyCount == 0) CANNOT use previous CAD context for revisions.
+                CadSpec activeDocSpec = null;
+                bool contextMatch = false;
+
+                if (activeDoc != null && activeBodyCount > 0)
                 {
-                    Messages.Add(ConversationMessage.ErrorMessage(
-                        "API Key Gemini belum diatur. Silakan buka Pengaturan (ikon roda gigi) untuk memasukkan API Key Anda."));
-                    OperationStatus = "Perlu Pengaturan API Key";
-                    StatusType = OperationStatusType.Warning;
-                    IsBusy = false;
-                    return;
+                    contextMatch = TryGetCadSpecForDocument(activeDocId, activeDocTitle, out activeDocSpec);
                 }
 
-                string prompt = _currentCadSpec != null
-                    ? _cadPlanner.BuildPromptForRevision(text, _currentCadSpec)
-                    : _cadPlanner.BuildPromptForTextRequest(text);
-
-                var historyList = new System.Collections.Generic.List<ConversationMessage>(Messages);
-                string responseText = await _geminiClient.SendTextAsync(prompt, historyList, _cts.Token).ConfigureAwait(true);
-
-                // Parse CadSpec
-                var spec = _cadPlanner.ParseCadSpec(responseText);
-                if (spec == null)
+                if (activeBodyCount <= 0)
                 {
-                    Messages.Add(ConversationMessage.AssistantText(responseText));
+                    activeDocSpec = null;
+                    contextMatch = false;
+                }
+
+                CurrentCadSpec = activeDocSpec;
+
+                // Pending task check (P0):
+                bool hasPendingTask = _pendingCadTask != null && _pendingCadTask.MatchesDocument(activeDocId, activeDocTitle);
+
+                // 1. Deterministic Intent Classification with reasoning
+                string classificationReason;
+                UserIntent intent = IntentClassifier.Classify(text, activeDocSpec, activeBodyCount, hasPendingTask, out classificationReason);
+
+                LoggingService.Instance.LogPipeline("STAGE_1_DOCUMENT_CONTEXT", "CONTEXT_CHECK",
+                    string.Format("ActiveDoc='{0}', BodyCount={1}, ContextMatch={2}, HasPendingTask={3}, Intent={4}, Reason='{5}'",
+                        activeDocTitle ?? "None", activeBodyCount, contextMatch, hasPendingTask, intent, classificationReason));
+
+                if (intent == UserIntent.ResumePendingTask && _pendingCadTask != null)
+                {
+                    LoggingService.Instance.LogPipeline("STAGE_1_RESUME_PENDING", "RESUMING",
+                        string.Format("Melanjutkan tugas CAD tertunda untuk prompt: '{0}' pada dokumen '{1}'",
+                            _pendingCadTask.OriginalPrompt, activeDocTitle ?? activeDocId ?? "None"));
+                    text = _pendingCadTask.OriginalPrompt;
+                    intent = activeBodyCount > 0 ? UserIntent.ModifyExistingModel : UserIntent.CreateNewModel;
+                }
+
+                if (intent == UserIntent.Conversational)
+                {
+                    LoggingService.Instance.LogPipeline("STAGE_2_DIRECT_EXECUTION", "CONVERSATIONAL_INTENT",
+                        "Pertanyaan percakapan terdeteksi. CAD Executor tidak akan dijalankan.");
+
+                    if (_credentialService.HasApiKey())
+                    {
+                        _activeOperationName = "Menjawab Pertanyaan";
+                        OperationStatus = "Menjawab Pertanyaan...";
+                        StatusType = OperationStatusType.Planning;
+                        var reqSw = System.Diagnostics.Stopwatch.StartNew();
+                        string answer = await _geminiClient.SendChatAsync(text, priorHistory, _cts.Token).ConfigureAwait(true);
+                        reqSw.Stop();
+                        Messages.Add(ConversationMessage.AssistantText(answer));
+                    }
+                    else
+                    {
+                        Messages.Add(ConversationMessage.AssistantText("Halo! Saya asisten AI CAD. Silakan berikan instruksi pemodelan (contoh: 'Buat pelat 100x60 tebal 5 mm') atau atur API Key di menu Pengaturan."));
+                    }
                     OperationStatus = "Siap";
                     StatusType = OperationStatusType.Ready;
                     IsBusy = false;
                     return;
                 }
 
-                // Semantic validation
+                if (intent == UserIntent.Export)
+                {
+                    LoggingService.Instance.LogPipeline("STAGE_2_DIRECT_EXECUTION", "EXPORT_INTENT", "Perintah ekspor model terdeteksi.");
+                    if (activeDoc == null)
+                    {
+                        Messages.Add(ConversationMessage.ErrorMessage("Tidak ada model aktif di SOLIDWORKS yang dapat diekspor."));
+                        OperationStatus = "Ekspor Gagal: Dokumen Kosong";
+                        StatusType = OperationStatusType.Failed;
+                    }
+                    else
+                    {
+                        string outDir = !string.IsNullOrWhiteSpace(_settings.OutputDirectory) ? _settings.OutputDirectory : System.Environment.GetFolderPath(System.Environment.SpecialFolder.MyDocuments);
+                        string baseName = Path.GetFileNameWithoutExtension(activeDoc.GetTitle());
+                        if (string.IsNullOrWhiteSpace(baseName)) baseName = "Model";
+
+                        string lowerText = text.ToLowerInvariant();
+                        if (lowerText.Contains("stl"))
+                        {
+                            string exportPath = Path.Combine(outDir, baseName + ".stl");
+                            bool ok = _swService.ExportStl(activeDoc, exportPath);
+                            if (ok)
+                            {
+                                Messages.Add(ConversationMessage.AssistantText("✓ Model berhasil diekspor ke STL:\n" + exportPath));
+                                OperationStatus = "Model Berhasil Diekspor ke STL";
+                                StatusType = OperationStatusType.Success;
+                            }
+                            else
+                            {
+                                Messages.Add(ConversationMessage.ErrorMessage("Gagal mengekspor model ke berkas STL."));
+                                OperationStatus = "Ekspor STL Gagal";
+                                StatusType = OperationStatusType.Failed;
+                            }
+                        }
+                        else
+                        {
+                            string exportPath = Path.Combine(outDir, baseName + ".step");
+                            bool ok = _swService.ExportStep(activeDoc, exportPath);
+                            if (ok)
+                            {
+                                Messages.Add(ConversationMessage.AssistantText("✓ Model berhasil diekspor ke STEP:\n" + exportPath));
+                                OperationStatus = "Model Berhasil Diekspor ke STEP";
+                                StatusType = OperationStatusType.Success;
+                            }
+                            else
+                            {
+                                Messages.Add(ConversationMessage.ErrorMessage("Gagal mengekspor model ke berkas STEP."));
+                                OperationStatus = "Ekspor STEP Gagal";
+                                StatusType = OperationStatusType.Failed;
+                            }
+                        }
+                    }
+                    IsBusy = false;
+                    return;
+                }
+
+                // 2. CAD Modeling Execution (CreateNewModel or ModifyExistingModel)
+                bool isModification = (intent == UserIntent.ModifyExistingModel);
+                string activeRequestId = "req_" + DateTime.Now.ToString("yyyyMMdd_HHmmss");
+
+                // Active model snapshot inspection (P0 Fallback & Context awareness)
+                ModelContextSnapshot activeSnapshot = null;
+                if (activeDoc != null && activeBodyCount > 0)
+                {
+                    activeSnapshot = _swService.InspectActiveModel(activeDoc);
+                    if (activeSnapshot != null)
+                    {
+                        LoggingService.Instance.Info(string.Format("[ACTIVE_MODEL_SNAPSHOT] Doc='{0}', Bodies={1}, Features={2}, Volume={3:N0} mm3",
+                            activeSnapshot.DocumentTitle, activeSnapshot.SolidBodyCount, activeSnapshot.FeatureList.Count, activeSnapshot.VolumeMm3));
+                    }
+                }
+
+                if (isModification)
+                {
+                    LoggingService.Instance.LogPipeline("STAGE_2_DIRECT_EXECUTION", "MODIFICATION_REQUEST",
+                        string.Format("Konteks: Modifikasi model aktif. Bodies={0}, CurrentOps={1}",
+                            activeBodyCount, activeDocSpec != null && activeDocSpec.Operations != null ? activeDocSpec.Operations.Count : 0));
+
+                    // Check Fast Path Revision first (< 10 ms latency)
+                    CadSpec fastRevSpec;
+                    if (CadFastPathEngine.TryCreateRevisionSpec(text, activeDocSpec, out fastRevSpec))
+                    {
+                        LoggingService.Instance.LogPipeline("STAGE_2_DIRECT_EXECUTION", "FAST_PATH_REVISION",
+                            string.Format("Revisi deterministik terdeteksi: {0}", fastRevSpec.Notes));
+                        spec = fastRevSpec;
+                    }
+                    else
+                    {
+                        LoggingService.Instance.LogPipeline("STAGE_2_DIRECT_EXECUTION", "FAST_PATH_BYPASSED",
+                            "Bukan pola penambahan primitif standar; mengalihkan ke CAD Planner Gemini.");
+
+                        if (!_credentialService.HasApiKey())
+                        {
+                            LoggingService.Instance.LogPipeline("STAGE_2_DIRECT_EXECUTION", "BLOCKED", "API Key Gemini belum disetel");
+                            Messages.Add(ConversationMessage.ErrorMessage(
+                                "API Key Gemini belum diatur. Silakan buka Pengaturan (ikon roda gigi) untuk memasukkan API Key Anda."));
+                            OperationStatus = "Perlu Pengaturan API Key";
+                            StatusType = OperationStatusType.Warning;
+                            IsBusy = false;
+                            return;
+                        }
+
+                        LoggingService.Instance.LogPipeline("STAGE_2_DIRECT_EXECUTION", "INITIATED_REVISION",
+                            string.Format("Model aktif: '{0}'", _geminiClient.CurrentModel));
+
+                        string prompt = _cadPlanner.BuildPromptForRevision(text, activeDocSpec, activeSnapshot);
+                        var historyList = new System.Collections.Generic.List<ConversationMessage>(Messages);
+
+                        LoggingService.Instance.LogPipeline("STAGE_3_GEMINI_REQUEST", "SENDING",
+                            string.Format("Ukuran prompt revisi: {0} karakter, Riwayat: {1} pesan", prompt.Length, historyList.Count));
+
+                        var reqSw = System.Diagnostics.Stopwatch.StartNew();
+                        ThinkingLevel thinkingLevel = AdaptiveThinkingManager.DetermineLevel(text, true);
+                        string responseText = await _geminiClient.SendCadPlanAsync(prompt, thinkingLevel, _cts.Token).ConfigureAwait(true);
+                        reqSw.Stop();
+
+                        LoggingService.Instance.LogPipeline("STAGE_4_GEMINI_RESPONSE", "SUCCESS",
+                            string.Format("Panjang respons: {0} karakter", responseText.Length), reqSw.ElapsedMilliseconds);
+
+                        spec = _cadPlanner.ParseCadSpec(responseText, existingCompletedOpIds);
+                        if (spec == null)
+                        {
+                            _pendingCadTask = new PendingCadTask(text, activeDocId, activeDocTitle, activeBodyCount, "Respons percakapan/penjelasan bukan CadSpec");
+                            LoggingService.Instance.LogPipeline("STAGE_5_CAD_PARSE", "CONVERSATIONAL",
+                                "Respons bukan CadSpec JSON (teks percakapan / penjelasan)");
+                            Messages.Add(ConversationMessage.AssistantText(responseText));
+                            OperationStatus = "Siap";
+                            StatusType = OperationStatusType.Ready;
+                            IsBusy = false;
+                            return;
+                        }
+
+                        // Structured Diagnostics (P1)
+                        int rawLen = responseText != null ? responseText.Length : 0;
+                        int opsCount = spec.Operations != null ? spec.Operations.Count : 0;
+                        int genIds = spec.Operations != null ? spec.Operations.Count(o => o.IsIdGenerated) : 0;
+                        LoggingService.Instance.Info(string.Format("[GEMINI_PLAN_DIAGNOSTICS] RequestId='{0}', RawLength={1}, ParsedOps={2}, GeneratedIds={3}, DocContextMatch={4}",
+                            spec.RequestId, rawLen, opsCount, genIds, contextMatch));
+                    }
+
+                    // Context Reconciliation: identify existing completed operations on active model
+                    string reconcileNote;
+                    CadContextReconciler.TryReconcileRevisionSpec(spec, activeDocSpec, activeBodyCount, out existingCompletedOpIds, out reconcileNote);
+                    if (!string.IsNullOrEmpty(reconcileNote))
+                    {
+                        LoggingService.Instance.Info("[CONTEXT_RECONCILE] " + reconcileNote);
+                    }
+                }
+                else
+                {
+                    // New Model Request
+                    LoggingService.Instance.LogPipeline("STAGE_2_DIRECT_EXECUTION", "NEW_MODEL_REQUEST",
+                        "Konteks: Pembuatan model baru dari awal.");
+
+                    CadSpec fastSpec;
+                    if (CadFastPathEngine.TryCreateSpec(text, out fastSpec))
+                    {
+                        LoggingService.Instance.LogPipeline("STAGE_2_DIRECT_EXECUTION", "FAST_PATH",
+                            string.Format("Model deterministik terdeteksi: {0}", fastSpec.Notes));
+                        spec = fastSpec;
+                    }
+                    else
+                    {
+                        LoggingService.Instance.LogPipeline("STAGE_2_DIRECT_EXECUTION", "FAST_PATH_BYPASSED",
+                            "Bukan pola deterministik standar; mengalihkan ke CAD Planner Gemini.");
+
+                        if (!_credentialService.HasApiKey())
+                        {
+                            LoggingService.Instance.LogPipeline("STAGE_2_DIRECT_EXECUTION", "BLOCKED", "API Key Gemini belum disetel");
+                            Messages.Add(ConversationMessage.ErrorMessage(
+                                "API Key Gemini belum diatur. Silakan buka Pengaturan (ikon roda gigi) untuk memasukkan API Key Anda."));
+                            OperationStatus = "Perlu Pengaturan API Key";
+                            StatusType = OperationStatusType.Warning;
+                            IsBusy = false;
+                            return;
+                        }
+
+                        LoggingService.Instance.LogPipeline("STAGE_2_DIRECT_EXECUTION", "INITIATED_NEW",
+                            string.Format("Model aktif: '{0}'", _geminiClient.CurrentModel));
+
+                        string prompt = _cadPlanner.BuildPromptForTextRequest(text);
+
+                        LoggingService.Instance.LogPipeline("STAGE_3_GEMINI_REQUEST", "SENDING",
+                            string.Format("Ukuran prompt model baru: {0} karakter", prompt.Length));
+
+                        var reqSw = System.Diagnostics.Stopwatch.StartNew();
+                        ThinkingLevel thinkingLevel = AdaptiveThinkingManager.DetermineLevel(text, false);
+                        string responseText = await _geminiClient.SendCadPlanAsync(prompt, thinkingLevel, _cts.Token).ConfigureAwait(true);
+                        reqSw.Stop();
+
+                        LoggingService.Instance.LogPipeline("STAGE_4_GEMINI_RESPONSE", "SUCCESS",
+                            string.Format("Panjang respons: {0} karakter", responseText.Length), reqSw.ElapsedMilliseconds);
+
+                        spec = _cadPlanner.ParseCadSpec(responseText);
+                        if (spec == null)
+                        {
+                            _pendingCadTask = new PendingCadTask(text, activeDocId, activeDocTitle, activeBodyCount, "Respons percakapan/penjelasan bukan CadSpec");
+                            LoggingService.Instance.LogPipeline("STAGE_5_CAD_PARSE", "CONVERSATIONAL",
+                                "Respons bukan CadSpec JSON (teks percakapan / penjelasan)");
+                            Messages.Add(ConversationMessage.AssistantText(responseText));
+                            OperationStatus = "Siap";
+                            StatusType = OperationStatusType.Ready;
+                            IsBusy = false;
+                            return;
+                        }
+
+                        // Structured Diagnostics (P1)
+                        int rawLen = responseText != null ? responseText.Length : 0;
+                        int opsCount = spec.Operations != null ? spec.Operations.Count : 0;
+                        int genIds = spec.Operations != null ? spec.Operations.Count(o => o.IsIdGenerated) : 0;
+                        LoggingService.Instance.Info(string.Format("[GEMINI_PLAN_DIAGNOSTICS] RequestId='{0}', RawLength={1}, ParsedOps={2}, GeneratedIds={3}, DocContextMatch={4}",
+                            spec.RequestId, rawLen, opsCount, genIds, contextMatch));
+                    }
+                }
+
+                // Prevent stale plan execution: tag spec with current active RequestId
+                spec.RequestId = activeRequestId;
+
+                LoggingService.Instance.LogPipeline("STAGE_5_CAD_PARSE", "SUCCESS",
+                    string.Format("RequestId: {0}, Operasi: {1}", spec.RequestId, spec.Operations != null ? spec.Operations.Count : 0));
+
+                // Semantic validation with awareness of existing completed operations
                 OperationStatus = "Memvalidasi Geometri...";
                 StatusType = OperationStatusType.Validating;
-                var validationResult = _validator.Validate(spec);
+                var validationResult = _validator.Validate(spec, existingCompletedOpIds);
 
                 if (!validationResult.IsValid)
                 {
+                    _pendingCadTask = new PendingCadTask(text, activeDocId, activeDocTitle, activeBodyCount, string.Join("; ", validationResult.Errors), spec);
+
                     if (validationResult.MissingDimensions != null && validationResult.MissingDimensions.Count > 0)
                     {
+                        LoggingService.Instance.LogPipeline("STAGE_6_CAD_VALIDATE", "MISSING_DIMENSIONS",
+                            string.Join("; ", validationResult.MissingDimensions));
                         string clarMsg = _cadPlanner.BuildClarificationMessage(validationResult.MissingDimensions);
                         Messages.Add(ConversationMessage.ClarificationRequest(clarMsg));
                         OperationStatus = "Menunggu Klarifikasi Dimensi";
@@ -244,6 +600,8 @@ namespace AICADAssistant.AddIn.UI.ViewModels
                     }
                     else
                     {
+                        LoggingService.Instance.LogPipeline("STAGE_6_CAD_VALIDATE", "INVALID",
+                            string.Join("; ", validationResult.Errors));
                         string errs = string.Join("\n• ", validationResult.Errors);
                         Messages.Add(ConversationMessage.ErrorMessage("Rencana CAD tidak valid secara geometris:\n• " + errs));
                         OperationStatus = "Validasi Gagal";
@@ -253,17 +611,57 @@ namespace AICADAssistant.AddIn.UI.ViewModels
                     return;
                 }
 
+                LoggingService.Instance.LogPipeline("STAGE_6_CAD_VALIDATE", "VALID", "Rencana CAD 100% valid secara semantik");
+
                 // Valid plan ready: Execute directly in SOLIDWORKS
-                CurrentCadSpec = spec;
-                OperationStatus = "Mengeksekusi Pemodelan CAD di SOLIDWORKS...";
+                _activeOperationName = "Mengeksekusi di SOLIDWORKS";
+                OperationStatus = "Mengeksekusi di SOLIDWORKS...";
                 StatusType = OperationStatusType.BuildingModel;
 
-                await ExecuteSpecDirectlyAsync(spec).ConfigureAwait(true);
+                bool execSuccess = ExecuteSpecDirectly(spec, existingCompletedOpIds, beforeVolume, isModification);
+                overallSw.Stop();
+                if (execSuccess)
+                {
+                    // Query actual post-execution document (P0 Persistence)
+                    var postDoc = _swService.GetActiveDocument();
+                    string postDocId = GetDocumentIdentifier(postDoc);
+                    string postDocTitle = GetDocumentTitle(postDoc);
+
+                    if (!string.IsNullOrEmpty(activeDocId) && !string.IsNullOrEmpty(postDocId) && !string.Equals(activeDocId, postDocId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        RegisterDocumentAlias(activeDocId, postDocId);
+                    }
+                    if (!string.IsNullOrEmpty(activeDocTitle) && !string.IsNullOrEmpty(postDocTitle) && !string.Equals(activeDocTitle, postDocTitle, StringComparison.OrdinalIgnoreCase))
+                    {
+                        RegisterDocumentAlias(activeDocTitle, postDocTitle);
+                    }
+
+                    // Cumulative spec maintenance: merge new operations into current spec for history
+                    CurrentCadSpec = isModification
+                        ? CadContextReconciler.MergeSpecs(activeDocSpec, spec)
+                        : spec;
+
+                    RegisterCadSpecForDocument(postDocId, postDocTitle, CurrentCadSpec);
+                    _pendingCadTask = null; // Clear pending task on success
+
+                    LoggingService.Instance.LogPipeline("STAGE_COMPLETE", "SUCCESS", "Pipeline Chat-to-CAD selesai dengan sukses.", overallSw.ElapsedMilliseconds);
+                }
+                else
+                {
+                    _pendingCadTask = new PendingCadTask(text, activeDocId, activeDocTitle, activeBodyCount, "Geometric execution failed", spec);
+                    LoggingService.Instance.LogPipeline("STAGE_COMPLETE", "FAILED", "Pipeline Chat-to-CAD gagal pada tahap eksekusi geometri.", overallSw.ElapsedMilliseconds);
+                }
             }
             catch (GeminiException ex)
             {
+                _pendingCadTask = new PendingCadTask(text, activeDocId, activeDocTitle, activeBodyCount, ex.Message);
+                LoggingService.Instance.LogPipeline("GEMINI_ERROR", "FAILED",
+                    string.Format("Status: {0}, Code: {1}, Msg: {2}", ex.ServerStatus, ex.StatusCode, ex.Message), overallSw.ElapsedMilliseconds, ex);
+
                 Messages.Add(ConversationMessage.ErrorMessage(ex.Message));
-                if (ex.IsModelNotFound)
+                if (ex.IsServerUnavailable)
+                    OperationStatus = "Server Gemini Sibuk (503)";
+                else if (ex.IsModelNotFound)
                     OperationStatus = "Model Gemini Tidak Ditemukan";
                 else if (ex.IsAuthError)
                     OperationStatus = "API Key Tidak Valid";
@@ -277,18 +675,22 @@ namespace AICADAssistant.AddIn.UI.ViewModels
             }
             catch (OperationCanceledException)
             {
+                LoggingService.Instance.LogPipeline("USER_CANCELLED", "CANCELLED", "Operasi dibatalkan oleh pengguna", overallSw.ElapsedMilliseconds);
                 Messages.Add(ConversationMessage.AssistantText("Operasi dibatalkan."));
                 OperationStatus = "Dibatalkan";
                 StatusType = OperationStatusType.Cancelled;
             }
             catch (Exception ex)
             {
+                _pendingCadTask = new PendingCadTask(text, activeDocId, activeDocTitle, activeBodyCount, ex.Message);
+                LoggingService.Instance.LogPipeline("PIPELINE_FATAL_ERROR", "ERROR", ex.Message, overallSw.ElapsedMilliseconds, ex);
                 Messages.Add(ConversationMessage.ErrorMessage("Terjadi kesalahan: " + ex.Message));
                 OperationStatus = "Error";
                 StatusType = OperationStatusType.Failed;
             }
             finally
             {
+                busyTimer.Stop();
                 IsBusy = false;
             }
         }
@@ -299,6 +701,7 @@ namespace AICADAssistant.AddIn.UI.ViewModels
                 return;
 
             IsBusy = true;
+            _activeOperationName = "Menganalisis Gambar dengan Gemini";
             OperationStatus = "Menganalisis Gambar dengan Gemini...";
             StatusType = OperationStatusType.Analyzing;
             _cts = new CancellationTokenSource();
@@ -359,15 +762,19 @@ namespace AICADAssistant.AddIn.UI.ViewModels
 
                 CurrentCadSpec = spec;
                 Messages.Add(ConversationMessage.AssistantText(
-                    string.Format("Gambar berhasil dianalisis! Ditemukan {0} operasi geometri. Klik 'Buat Model' untuk membangun part di SOLIDWORKS.", spec.Operations.Count)));
+                    string.Format("Gambar berhasil dianalisis! Ditemukan {0} operasi geometri. Mengeksekusi model di SOLIDWORKS...", spec.Operations.Count)));
 
-                OperationStatus = "Analisis Selesai";
-                StatusType = OperationStatusType.Success;
+                OperationStatus = "Mengeksekusi Model dari Gambar...";
+                StatusType = OperationStatusType.BuildingModel;
+
+                ExecuteSpecDirectly(spec);
             }
             catch (GeminiException ex)
             {
                 Messages.Add(ConversationMessage.ErrorMessage(ex.Message));
-                if (ex.IsModelNotFound)
+                if (ex.IsServerUnavailable)
+                    OperationStatus = "Server Gemini Sibuk (503)";
+                else if (ex.IsModelNotFound)
                     OperationStatus = "Model Gemini Tidak Ditemukan";
                 else if (ex.IsAuthError)
                     OperationStatus = "API Key Tidak Valid";
@@ -397,7 +804,7 @@ namespace AICADAssistant.AddIn.UI.ViewModels
             }
         }
 
-        public async Task BuildModelAsync()
+        public void BuildModel()
         {
             if (CurrentCadSpec == null || _isBusy) return;
 
@@ -407,7 +814,7 @@ namespace AICADAssistant.AddIn.UI.ViewModels
 
             try
             {
-                await ExecuteSpecDirectlyAsync(CurrentCadSpec).ConfigureAwait(true);
+                ExecuteSpecDirectly(CurrentCadSpec);
             }
             finally
             {
@@ -415,9 +822,9 @@ namespace AICADAssistant.AddIn.UI.ViewModels
             }
         }
 
-        private async Task ExecuteSpecDirectlyAsync(CadSpec spec)
+        private bool ExecuteSpecDirectly(CadSpec spec, HashSet<string> existingCompletedOpIds = null, double previousVolume = 0, bool isModification = false)
         {
-            if (spec == null) return;
+            if (spec == null) return false;
 
             try
             {
@@ -432,10 +839,29 @@ namespace AICADAssistant.AddIn.UI.ViewModels
                     }
                 }
 
-                // Execute deterministically on SOLIDWORKS COM
-                ExecutionResult result = await Task.Run(() => _swService.ExecuteSpec(spec, _settings.OutputDirectory)).ConfigureAwait(true);
+                int completedCount = existingCompletedOpIds != null ? existingCompletedOpIds.Count : 0;
+                LoggingService.Instance.LogPipeline("STAGE_7_CAD_EXECUTOR", "INVOKING",
+                    string.Format("Mengeksekusi {0} operasi CAD di thread STA SOLIDWORKS... (ExistingCompleted: {1})",
+                        spec.Operations != null ? spec.Operations.Count : 0, completedCount));
 
-                if (result.Success && result.SolidBodyCount > 0)
+                // CRITICAL STA THREAD SAFETY:
+                // Execute synchronously on the SolidWorks STA thread, NEVER on Task.Run ThreadPool!
+                ExecutionResult result = _swService.ExecuteSpec(spec, _settings.OutputDirectory, existingCompletedOpIds);
+
+                // Run strict geometric verification
+                var verifReport = GeometryVerifier.Verify(result, spec, previousVolume, isModification);
+
+                string verifLogStatus = (result.Success && verifReport.Status == VerificationStatus.CompleteSuccess)
+                    ? "SUCCESS"
+                    : (verifReport.Status == VerificationStatus.PartialSuccess ? "PARTIAL_SUCCESS" : "FAILED");
+
+                LoggingService.Instance.LogPipeline("CAD_RESULT", verifLogStatus,
+                    string.Format("Status={0}, Doc='{1}', Feature='{2}', Bodies={3}, Rebuild={4}, Vol={5:N2} mm3, Detail='{6}'",
+                        verifReport.Status, result.DocumentTitle, result.FeatureName, result.SolidBodyCount, result.RebuildSuccess, result.VolumeMm3,
+                        verifReport.IsValid ? "OK" : string.Join("; ", verifReport.Errors)),
+                    result.DurationMs);
+
+                if (result.Success && verifReport.Status == VerificationStatus.CompleteSuccess)
                 {
                     var sb = new System.Text.StringBuilder();
                     sb.AppendLine("✓ Model 3D berhasil dibuat dan direbuild secara native di SOLIDWORKS!");
@@ -463,6 +889,19 @@ namespace AICADAssistant.AddIn.UI.ViewModels
                         sb.AppendLine(string.Format("• Volume Benda: {0:N2} mm³", result.VolumeMm3));
                     }
 
+                    if (isModification && Math.Abs(verifReport.VolumeDeltaMm3) > 0.001)
+                    {
+                        sb.AppendLine(string.Format("• Perubahan Volume: {0:+0.00;-0.00;0.00} mm³", verifReport.VolumeDeltaMm3));
+                    }
+
+                    if (verifReport.Warnings != null && verifReport.Warnings.Count > 0)
+                    {
+                        foreach (var w in verifReport.Warnings)
+                        {
+                            sb.AppendLine("• Catatan: " + w);
+                        }
+                    }
+
                     sb.AppendLine(string.Format("• Waktu Eksekusi: {0} ms", result.DurationMs));
 
                     if (!string.IsNullOrWhiteSpace(result.SavedFilePath))
@@ -477,26 +916,66 @@ namespace AICADAssistant.AddIn.UI.ViewModels
                     }
 
                     Messages.Add(ConversationMessage.AssistantText(sb.ToString().TrimEnd()));
-                    OperationStatus = "Model Berhasil Dibuat";
+                    OperationStatus = "Model Berhasil Dibuat (Complete Success)";
                     StatusType = OperationStatusType.Success;
+                    return true;
+                }
+                else if (result.Success && verifReport.Status == VerificationStatus.PartialSuccess)
+                {
+                    var sb = new System.Text.StringBuilder();
+                    sb.AppendLine("⚠ Model 3D terbentuk sebagian di SOLIDWORKS (Partial Success):");
+
+                    if (!string.IsNullOrWhiteSpace(result.DocumentTitle))
+                    {
+                        sb.AppendLine("• Dokumen: " + result.DocumentTitle);
+                    }
+                    sb.AppendLine(string.Format("• Solid Body: {0}", result.SolidBodyCount));
+                    if (result.VolumeMm3 > 0)
+                    {
+                        sb.AppendLine(string.Format("• Volume Benda: {0:N2} mm³", result.VolumeMm3));
+                    }
+
+                    if (verifReport.Errors != null && verifReport.Errors.Count > 0)
+                    {
+                        foreach (var e in verifReport.Errors)
+                        {
+                            sb.AppendLine("• Masalah Geometri: " + e);
+                        }
+                    }
+                    if (verifReport.Warnings != null && verifReport.Warnings.Count > 0)
+                    {
+                        foreach (var w in verifReport.Warnings)
+                        {
+                            sb.AppendLine("• Catatan: " + w);
+                        }
+                    }
+
+                    Messages.Add(ConversationMessage.AssistantText(sb.ToString().TrimEnd()));
+                    OperationStatus = "Model Parsial (Operasi Belum Lengkap)";
+                    StatusType = OperationStatusType.Warning;
+                    return false;
                 }
                 else
                 {
-                    string err = !string.IsNullOrWhiteSpace(result.ErrorMessage)
-                        ? result.ErrorMessage
-                        : (result.SolidBodyCount == 0 ? "Tidak ada Solid Body yang terbentuk (Body Count = 0)." : "Gagal mengeksekusi geometri di SOLIDWORKS.");
+                    string err = (verifReport.Errors != null && verifReport.Errors.Count > 0)
+                        ? string.Join("\n• ", verifReport.Errors)
+                        : (!string.IsNullOrWhiteSpace(result.ErrorMessage)
+                            ? result.ErrorMessage
+                            : (result.SolidBodyCount == 0 ? "Tidak ada Solid Body yang terbentuk (Body Count = 0)." : "Gagal mengeksekusi geometri di SOLIDWORKS."));
 
-                    Messages.Add(ConversationMessage.ErrorMessage("Gagal membuat model: " + err));
-                    OperationStatus = "Pembuatan Model Gagal";
+                    Messages.Add(ConversationMessage.ErrorMessage("Gagal membuat model:\n• " + err));
+                    OperationStatus = "Verifikasi Gagal: " + (verifReport.Errors.Count > 0 ? verifReport.Errors[0] : err);
                     StatusType = OperationStatusType.Failed;
+                    return false;
                 }
             }
             catch (Exception ex)
             {
                 LoggingService.Instance.Error("Kesalahan saat mengeksekusi model CAD", ex);
                 Messages.Add(ConversationMessage.ErrorMessage("Terjadi kesalahan pembuatan model: " + ex.Message));
-                OperationStatus = "Error";
+                OperationStatus = "Error: " + ex.Message;
                 StatusType = OperationStatusType.Failed;
+                return false;
             }
         }
 
@@ -578,17 +1057,116 @@ namespace AICADAssistant.AddIn.UI.ViewModels
             }
         }
 
+        public PendingCadTask ActivePendingTask => _pendingCadTask;
+
+        public void RegisterDocumentAlias(string alias, string canonicalId)
+        {
+            if (string.IsNullOrWhiteSpace(alias) || string.IsNullOrWhiteSpace(canonicalId))
+                return;
+            _documentAliases[alias] = canonicalId;
+        }
+
+        public bool TryGetCadSpecForDocument(string docId, string docTitle, out CadSpec foundSpec)
+        {
+            foundSpec = null;
+            if (!string.IsNullOrEmpty(docId))
+            {
+                if (_documentCadSpecs.TryGetValue(docId, out foundSpec))
+                    return true;
+                if (_documentAliases.TryGetValue(docId, out string targetId) && _documentCadSpecs.TryGetValue(targetId, out foundSpec))
+                    return true;
+            }
+            if (!string.IsNullOrEmpty(docTitle))
+            {
+                if (_documentCadSpecs.TryGetValue(docTitle, out foundSpec))
+                    return true;
+                if (_documentAliases.TryGetValue(docTitle, out string targetId) && _documentCadSpecs.TryGetValue(targetId, out foundSpec))
+                    return true;
+            }
+            return false;
+        }
+
+        public void RegisterCadSpecForDocument(string docId, string docTitle, CadSpec spec)
+        {
+            if (spec == null) return;
+            if (!string.IsNullOrEmpty(docId))
+            {
+                spec.TargetDocumentId = docId;
+                _documentCadSpecs[docId] = spec;
+            }
+            if (!string.IsNullOrEmpty(docTitle))
+            {
+                spec.TargetDocumentTitle = docTitle;
+                _documentCadSpecs[docTitle] = spec;
+            }
+        }
+
+        public void SetPendingCadTask(PendingCadTask task)
+        {
+            _pendingCadTask = task;
+        }
+
+        public void ClearPendingCadTask()
+        {
+            _pendingCadTask = null;
+        }
+
         public void OnActiveDocumentChanged()
         {
             var doc = _swService.GetActiveDocument();
             if (doc != null)
             {
+                _activeDocumentId = GetDocumentIdentifier(doc);
+                _activeDocumentTitle = GetDocumentTitle(doc);
                 CurrentDocumentPath = doc.GetPathName();
+
+                if (!string.IsNullOrEmpty(_activeDocumentTitle) && !string.IsNullOrEmpty(CurrentDocumentPath))
+                {
+                    RegisterDocumentAlias(_activeDocumentTitle, CurrentDocumentPath);
+                }
+
+                int bodies = _swService.GetSolidBodyCount(doc);
+                if (bodies > 0 && TryGetCadSpecForDocument(_activeDocumentId, _activeDocumentTitle, out var mappedSpec))
+                {
+                    CurrentCadSpec = mappedSpec;
+                }
+                else
+                {
+                    CurrentCadSpec = null;
+                }
             }
             else
             {
+                _activeDocumentId = null;
+                _activeDocumentTitle = null;
                 CurrentDocumentPath = null;
+                CurrentCadSpec = null;
             }
+        }
+
+        private string GetDocumentIdentifier(ModelDoc2 doc)
+        {
+            if (doc == null) return null;
+            try
+            {
+                string path = doc.GetPathName();
+                if (!string.IsNullOrWhiteSpace(path)) return path;
+                string title = doc.GetTitle();
+                if (!string.IsNullOrWhiteSpace(title)) return title;
+            }
+            catch { }
+            return null;
+        }
+
+        private string GetDocumentTitle(ModelDoc2 doc)
+        {
+            if (doc == null) return null;
+            try
+            {
+                return doc.GetTitle();
+            }
+            catch { }
+            return null;
         }
 
         private void OnPropertyChanged(string propName)

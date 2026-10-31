@@ -122,7 +122,12 @@ namespace AICADAssistant.AddIn
         {
             try
             {
-                LogMessage("[Stage 1/6] ConnectToSW dimulai. Cookie=" + cookie);
+                var curAsm = System.Reflection.Assembly.GetExecutingAssembly();
+                string asmPath = curAsm.Location;
+                DateTime asmWriteTime = File.Exists(asmPath) ? File.GetLastWriteTime(asmPath) : DateTime.MinValue;
+                LogMessage(string.Format("[Stage 1/6] ConnectToSW dimulai. AI CAD Assistant v{0} | Assembly: '{1}' (Last Modified: {2:yyyy-MM-dd HH:mm:ss}) | Cookie={3}",
+                    curAsm.GetName().Version, asmPath, asmWriteTime, cookie));
+
                 if (ThisSW == null)
                 {
                     LogMessage("[Stage 1/6] ERROR: Parameter ThisSW bernilai null!");
@@ -426,13 +431,15 @@ namespace AICADAssistant.AddIn
     /// Custom ElementHost that prevents SOLIDWORKS accelerator table from intercepting
     /// keyboard messages (typing, shortcuts, text navigation) meant for WPF input controls.
     /// </summary>
+    [ComVisible(true)]
+    [ClassInterface(ClassInterfaceType.AutoDispatch)]
     public class SafeElementHost : ElementHost
     {
         private const int WM_GETDLGCODE = 0x0087;
-        private const int DLGC_WANTALLKEYS = 0x0004;
-        private const int DLGC_WANTARROWS = 0x0001;
-        private const int DLGC_WANTCHARS = 0x0080;
-        private const int DLGC_WANTTAB = 0x0002;
+        private const uint DLGC_WANTALLKEYS = 0x0004;
+        private const uint DLGC_WANTARROWS = 0x0001;
+        private const uint DLGC_WANTCHARS = 0x0080;
+        private const uint DLGC_WANTTAB = 0x0002;
 
         protected override bool IsInputKey(Keys keyData)
         {
@@ -459,13 +466,15 @@ namespace AICADAssistant.AddIn
     /// Custom Windows Forms UserControl wrapper that retains focus and prevents
     /// key-press swallowing across unmanaged Win32 / SolidWorks boundaries.
     /// </summary>
+    [ComVisible(true)]
+    [ClassInterface(ClassInterfaceType.AutoDispatch)]
     public class TaskPaneWinFormsHost : UserControl
     {
         private const int WM_GETDLGCODE = 0x0087;
-        private const int DLGC_WANTALLKEYS = 0x0004;
-        private const int DLGC_WANTARROWS = 0x0001;
-        private const int DLGC_WANTCHARS = 0x0080;
-        private const int DLGC_WANTTAB = 0x0002;
+        private const uint DLGC_WANTALLKEYS = 0x0004;
+        private const uint DLGC_WANTARROWS = 0x0001;
+        private const uint DLGC_WANTCHARS = 0x0080;
+        private const uint DLGC_WANTTAB = 0x0002;
 
         protected override bool IsInputKey(Keys keyData)
         {
@@ -475,6 +484,13 @@ namespace AICADAssistant.AddIn
         protected override bool IsInputChar(char charCode)
         {
             return true;
+        }
+
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            // Do not allow WinForms container to intercept command or accelerator keys
+            // when typing or navigating in the WPF ElementHost.
+            return false;
         }
 
         protected override void WndProc(ref Message m)

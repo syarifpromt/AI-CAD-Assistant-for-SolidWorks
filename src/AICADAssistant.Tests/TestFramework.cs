@@ -49,6 +49,12 @@ namespace Microsoft.VisualStudio.TestTools.UnitTesting
                 throw new AssertFailedException(string.Format("{0} Expected: <{1}>. Actual: <{2}>.", message ?? "Assert.AreEqual failed.", expected, actual));
         }
 
+        public static void AreNotEqual<T>(T notExpected, T actual, string message = null)
+        {
+            if (object.Equals(notExpected, actual))
+                throw new AssertFailedException(string.Format("{0} Did not expect: <{1}>. Actual: <{2}>.", message ?? "Assert.AreNotEqual failed.", notExpected, actual));
+        }
+
         public static void AreEqual(double expected, double actual, double delta, string message = null)
         {
             if (Math.Abs(expected - actual) > delta)

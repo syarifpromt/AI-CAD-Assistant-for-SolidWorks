@@ -45,6 +45,24 @@ namespace AICADAssistant.Core.Gemini
         public int promptTokenCount { get; set; }
         public int candidatesTokenCount { get; set; }
         public int totalTokenCount { get; set; }
+        public int thoughtsTokenCount { get; set; }
+    }
+
+    public class GeminiCallResult
+    {
+        public string Text { get; set; }
+        public int StatusCode { get; set; }
+        public long LatencyMs { get; set; }
+        public int PromptTokens { get; set; }
+        public int CandidateTokens { get; set; }
+        public int ThoughtTokens { get; set; }
+        public int TotalTokens { get; set; }
+        public string ModelName { get; set; }
+
+        public GeminiCallResult()
+        {
+            StatusCode = 200;
+        }
     }
 
     public class GeminiErrorResponse

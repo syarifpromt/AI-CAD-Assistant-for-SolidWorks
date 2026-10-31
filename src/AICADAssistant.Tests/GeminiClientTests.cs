@@ -58,23 +58,34 @@ namespace AICADAssistant.Tests
         }
 
         [TestMethod]
-        public void GeminiClient_DefaultModel_IsGemini38Flash()
+        public void GeminiClient_DefaultModel_IsGemini35FlashLite()
         {
             var settings = new AppSettings();
             var client = new GeminiClient(_credentialService, settings);
-            Assert.AreEqual("gemini-3.8-flash", client.CurrentModel);
+            Assert.AreEqual("gemini-3.5-flash-lite", client.CurrentModel);
         }
 
         [TestMethod]
         public void GeminiClient_CustomModel_IsUsedInCurrentModel()
         {
-            var settings = new AppSettings { GeminiModel = "gemini-3.5-flash-lite" };
+            var settings = new AppSettings { GeminiModel = "gemini-3.8-flash" };
             var client = new GeminiClient(_credentialService, settings);
-            Assert.AreEqual("gemini-3.5-flash-lite", client.CurrentModel);
+            Assert.AreEqual("gemini-3.8-flash", client.CurrentModel);
 
             // Change model dynamically without recreating client or changing CAD engine
             settings.GeminiModel = "gemini-custom-enterprise";
             Assert.AreEqual("gemini-custom-enterprise", client.CurrentModel);
+        }
+
+        [TestMethod]
+        public void GeminiException_ServerUnavailable_FlagsSetProperly()
+        {
+            var ex = GeminiException.ServerUnavailableException("gemini-3.8-flash", "High demand");
+            Assert.IsTrue(ex.IsServerUnavailable);
+            Assert.AreEqual(503, ex.StatusCode);
+            Assert.AreEqual("UNAVAILABLE", ex.ServerStatus);
+            Assert.IsTrue(ex.Message.Contains("503"));
+            Assert.IsTrue(ex.Message.Contains("gemini-3.8-flash"));
         }
 
         [TestMethod]
@@ -123,6 +134,42 @@ namespace AICADAssistant.Tests
             string plainKeyInText = "Exception with key AIzaSyA1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6 inside message";
             string redactedPlain = LoggingService.RedactApiKey(plainKeyInText);
             Assert.IsFalse(redactedPlain.Contains("AIzaSyA1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6"));
+        }
+
+        [TestMethod]
+        public void AppSettings_DefaultRequestTimeout_Is120Seconds()
+        {
+            var settings = new AppSettings();
+            Assert.AreEqual(120, settings.RequestTimeoutSeconds);
+        }
+
+        [TestMethod]
+        public void AppSettings_SanitizeExcessiveValues_ClampsTimeoutAndRetries()
+        {
+            var settings = new AppSettings
+            {
+                RequestTimeoutSeconds = 9000,
+                MaxRetryAttempts = 10,
+                GeminiModel = "gemini-1.5-flash"
+            };
+
+            Assert.AreEqual(9000, settings.RequestTimeoutSeconds);
+            Assert.AreEqual(10, settings.MaxRetryAttempts);
+
+            // Calls actual production method on AppSettings
+            settings.Sanitize();
+
+            Assert.AreEqual(120, settings.RequestTimeoutSeconds);
+            Assert.AreEqual(2, settings.MaxRetryAttempts);
+            Assert.AreEqual(AppSettings.DefaultGeminiModel, settings.GeminiModel);
+        }
+
+        [TestMethod]
+        public void LoggingService_LogPipeline_ExecutesWithoutExceptions()
+        {
+            LoggingService.Instance.LogPipeline("TEST_STAGE", "SUCCESS", "Testing pipeline logging", 42);
+            // If no exception thrown, test passes safely
+            Assert.IsTrue(true);
         }
     }
 }

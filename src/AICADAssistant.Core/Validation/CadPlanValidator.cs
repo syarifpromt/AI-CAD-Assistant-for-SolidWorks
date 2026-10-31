@@ -13,6 +13,11 @@ namespace AICADAssistant.Core.Validation
     {
         public ValidationResult Validate(CadSpec spec)
         {
+            return Validate(spec, null);
+        }
+
+        public ValidationResult Validate(CadSpec spec, IEnumerable<string> existingOperationIds)
+        {
             var result = new ValidationResult();
 
             if (spec == null)
@@ -36,18 +41,36 @@ namespace AICADAssistant.Core.Validation
 
             // 3. Collect operation IDs for dependency checks
             var operationIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var existingSet = existingOperationIds != null
+                ? new HashSet<string>(existingOperationIds, StringComparer.OrdinalIgnoreCase)
+                : null;
+
+            if (existingSet != null)
+            {
+                foreach (var id in existingSet)
+                {
+                    if (!string.IsNullOrWhiteSpace(id))
+                    {
+                        operationIds.Add(id);
+                    }
+                }
+            }
+
+            var seenInSpec = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var op in spec.Operations)
             {
+                if (op == null) continue;
                 if (string.IsNullOrWhiteSpace(op.Id))
                 {
                     result.AddError("Terdapat operasi tanpa Id.");
                 }
-                else if (operationIds.Contains(op.Id))
+                else if (seenInSpec.Contains(op.Id))
                 {
                     result.AddError("Terdapat duplikasi Id operasi: " + op.Id);
                 }
                 else
                 {
+                    seenInSpec.Add(op.Id);
                     operationIds.Add(op.Id);
                 }
             }
@@ -89,9 +112,14 @@ namespace AICADAssistant.Core.Validation
             }
 
             // Whitelist check
+            if (op.Type == OperationType.Unknown)
+            {
+                result.AddError(string.Format("Operasi '{0}' memiliki tipe tidak valid atau tidak ditentukan (Raw: '{1}', Parsed: Unknown).", op.Id ?? "?", op.RawTypeString ?? "none"));
+                return;
+            }
             if (!AllowedOperations.Whitelist.Contains(op.Type))
             {
-                result.AddError(string.Format("Operasi '{0}' dengan tipe '{1}' tidak ada dalam whitelist operasi yang diizinkan.", op.Id, op.Type));
+                result.AddError(string.Format("Operasi '{0}' dengan tipe '{1}' (raw: '{2}') tidak ada dalam whitelist operasi yang diizinkan.", op.Id ?? "?", op.Type, op.RawTypeString ?? "none"));
                 return;
             }
 
@@ -115,10 +143,57 @@ namespace AICADAssistant.Core.Validation
             switch (op.Type)
             {
                 case OperationType.NewSketch:
-                    // plane is optional or can be Front/Top/Right
+                case OperationType.EndSketch:
+                case OperationType.ActivateDocument:
+                case OperationType.Rebuild:
+                case OperationType.SavePart:
+                case OperationType.ExportStep:
+                case OperationType.ExportStl:
+                    // Parameterless or optional parameters
+                    break;
+
+                case OperationType.AddLine:
+                    ValidateDoubleExists(op, "x1", result);
+                    ValidateDoubleExists(op, "y1", result);
+                    ValidateDoubleExists(op, "x2", result);
+                    ValidateDoubleExists(op, "y2", result);
+                    break;
+
+                case OperationType.AddPolyline:
+                    List<double[]> polyPts;
+                    if (!op.TryGetPoints(out polyPts) || polyPts.Count < 2)
+                    {
+                        result.AddError(string.Format("Operasi '{0}' ({1}): Parameter 'points' harus berisi daftar koordinat titik (minimal 2 titik untuk segmen terbuka, minimal 3 titik untuk profil tertutup).", op.Id, op.Type));
+                        break;
+                    }
+                    bool isClosed = true;
+                    op.TryGetBool("closed", out isClosed);
+                    if (isClosed && polyPts.Count < 3)
+                    {
+                        result.AddError(string.Format("Operasi '{0}' ({1}): Profil tertutup (closed=true) memerlukan minimal 3 titik koordinat (diterima: {2}).", op.Id, op.Type, polyPts.Count));
+                        break;
+                    }
+                    for (int pIdx = 0; pIdx < polyPts.Count; pIdx++)
+                    {
+                        if (double.IsNaN(polyPts[pIdx][0]) || double.IsInfinity(polyPts[pIdx][0]) ||
+                            double.IsNaN(polyPts[pIdx][1]) || double.IsInfinity(polyPts[pIdx][1]))
+                        {
+                            result.AddError(string.Format("Operasi '{0}' ({1}): Titik #{2} memiliki koordinat NaN atau tak hingga.", op.Id, op.Type, pIdx + 1));
+                        }
+                    }
+                    for (int pIdx = 0; pIdx < polyPts.Count - 1; pIdx++)
+                    {
+                        double dx = polyPts[pIdx + 1][0] - polyPts[pIdx][0];
+                        double dy = polyPts[pIdx + 1][1] - polyPts[pIdx][1];
+                        if (Math.Sqrt(dx * dx + dy * dy) < 1e-6)
+                        {
+                            result.AddWarning(string.Format("Operasi '{0}' ({1}): Segmen antara titik #{2} dan #{3} memiliki panjang mendekati nol.", op.Id, op.Type, pIdx + 1, pIdx + 2));
+                        }
+                    }
                     break;
 
                 case OperationType.AddRectangle:
+                case OperationType.AddCenterRectangle:
                     ValidatePositiveDouble(op, "width", result);
                     ValidatePositiveDouble(op, "height", result);
                     break;
@@ -127,12 +202,40 @@ namespace AICADAssistant.Core.Validation
                     ValidatePositiveDouble(op, "diameter", "radius", result);
                     break;
 
+                case OperationType.AddArc:
+                    ValidatePositiveDouble(op, "radius", result);
+                    break;
+
+                case OperationType.AddSlot:
+                    ValidatePositiveDouble(op, "length", result);
+                    ValidatePositiveDouble(op, "width", result);
+                    break;
+
+                case OperationType.AddPolygon:
+                    ValidatePositiveDouble(op, "sides", result);
+                    ValidatePositiveDouble(op, "radius", result);
+                    break;
+
+                case OperationType.AddPoint:
+                    ValidateDoubleExists(op, "x", result);
+                    ValidateDoubleExists(op, "y", result);
+                    break;
+
                 case OperationType.ExtrudeBoss:
-                case OperationType.ExtrudeCut:
                     ValidatePositiveDouble(op, "depth", result);
                     break;
 
+                case OperationType.ExtrudeCut:
+                    bool throughAll;
+                    op.TryGetBool("throughAll", out throughAll);
+                    if (!throughAll)
+                    {
+                        ValidatePositiveDouble(op, "depth", result);
+                    }
+                    break;
+
                 case OperationType.RevolvedBoss:
+                case OperationType.RevolvedCut:
                     double revAngle;
                     if (op.TryGetDouble("angle", out revAngle) && revAngle <= 0)
                     {
@@ -154,7 +257,16 @@ namespace AICADAssistant.Core.Validation
 
                 case OperationType.SimpleHole:
                     ValidatePositiveDouble(op, "diameter", result, isRequiredHoleDimension: true);
-                    ValidatePositiveDouble(op, "depth", result);
+                    bool holeThrough;
+                    op.TryGetBool("throughAll", out holeThrough);
+                    if (!holeThrough)
+                    {
+                        ValidatePositiveDouble(op, "depth", result);
+                    }
+                    break;
+
+                case OperationType.Shell:
+                    ValidatePositiveDouble(op, "thickness", result);
                     break;
 
                 case OperationType.LinearPattern:
@@ -164,6 +276,22 @@ namespace AICADAssistant.Core.Validation
                     {
                         result.AddError(string.Format("Operasi '{0}' ({1}): Jumlah instance pattern minimal 2.", op.Id, op.Type));
                     }
+                    break;
+
+                case OperationType.CircularPattern:
+                    double circCount;
+                    if (op.TryGetDouble("instances", out circCount) && circCount < 2)
+                    {
+                        result.AddError(string.Format("Operasi '{0}' ({1}): Jumlah instance circular pattern minimal 2.", op.Id, op.Type));
+                    }
+                    break;
+
+                case OperationType.Mirror:
+                case OperationType.CreatePlane:
+                case OperationType.SweepBoss:
+                case OperationType.AddDimension:
+                case OperationType.AddConstraint:
+                    // Valid parameters checked conditionally
                     break;
             }
         }
@@ -210,6 +338,15 @@ namespace AICADAssistant.Core.Validation
             if (has2 && val2 <= 0)
             {
                 result.AddError(string.Format("Operasi '{0}' ({1}): Parameter '{2}' harus bernilai positif lebih dari nol (diterima: {3}).", op.Id, op.Type, paramName2, val2));
+            }
+        }
+
+        private void ValidateDoubleExists(CadOperation op, string paramName, ValidationResult result)
+        {
+            double val;
+            if (!op.TryGetDouble(paramName, out val))
+            {
+                result.AddError(string.Format("Operasi '{0}' ({1}): Parameter wajib '{2}' tidak ditemukan atau bukan angka valid.", op.Id, op.Type, paramName));
             }
         }
     }

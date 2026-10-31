@@ -17,5 +17,6 @@ using System.Runtime.InteropServices;
 // The following GUID is for the ID of the typelib if this project is exposed to COM.
 // Note: This LIBID is distinct from the SwAddIn class CLSID (a1b2c3d4-e5f6-7890-abcd-ef1234567890).
 [assembly: Guid("f2c1b0a9-8e7d-6c5b-4a32-10fedcba9876")]
-[assembly: AssemblyVersion("1.0.0.0")]
-[assembly: AssemblyFileVersion("1.0.0.0")]
+[assembly: AssemblyVersion("3.0.2.0")]
+[assembly: AssemblyFileVersion("3.0.2.0")]
+[assembly: AssemblyInformationalVersion("3.0.2")]

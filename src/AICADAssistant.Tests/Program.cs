@@ -10,6 +10,34 @@ namespace AICADAssistant.Tests
     {
         static int Main(string[] args)
         {
+            if (args != null && args.Length > 0 && args[0] == "--live-test")
+            {
+                Console.WriteLine("=================================================");
+                Console.WriteLine("  AI CAD Assistant - Live Gemini API Test        ");
+                Console.WriteLine("=================================================");
+                try
+                {
+                    var cred = new AICADAssistant.Core.Services.CredentialService();
+                    var settings = AICADAssistant.Core.Models.AppSettings.Load();
+                    var client = new AICADAssistant.Core.Gemini.GeminiClient(cred, settings);
+                    Console.WriteLine("Active Model: " + client.CurrentModel);
+                    Console.WriteLine("API Key Present: " + cred.HasApiKey());
+                    var sw = Stopwatch.StartNew();
+                    string res = client.SendChatAsync("Jelaskan perbedaan Extrude Boss, Extrude Cut, Revolve, dan Sweep.", null).Result;
+                    sw.Stop();
+                    Console.WriteLine("STATUS: SUCCESS");
+                    Console.WriteLine("LATENCY: " + sw.ElapsedMilliseconds + " ms");
+                    Console.WriteLine("RESPONSE PREVIEW:\n" + (res.Length > 500 ? res.Substring(0, 500) + "..." : res));
+                    return 0;
+                }
+                catch (Exception ex)
+                {
+                    Exception actual = ex is AggregateException ? ex.InnerException : ex;
+                    Console.WriteLine("STATUS: FAILED - " + actual.Message);
+                    return 1;
+                }
+            }
+
             Console.WriteLine("=================================================");
             Console.WriteLine("  AI CAD Assistant - Automated Unit Test Suite   ");
             Console.WriteLine("=================================================");
@@ -26,16 +54,19 @@ namespace AICADAssistant.Tests
                     continue;
 
                 Console.WriteLine("\n[Class] " + type.Name);
-                object instance = null;
 
-                // Find TestInitialize method
+                // Find TestInitialize and TestCleanup methods
                 MethodInfo initMethod = null;
+                MethodInfo cleanupMethod = null;
                 foreach (var m in type.GetMethods())
                 {
                     if (m.GetCustomAttribute<TestInitializeAttribute>() != null)
                     {
                         initMethod = m;
-                        break;
+                    }
+                    if (m.GetCustomAttribute<TestCleanupAttribute>() != null)
+                    {
+                        cleanupMethod = m;
                     }
                 }
 
@@ -45,12 +76,9 @@ namespace AICADAssistant.Tests
                         continue;
 
                     totalTests++;
+                    object instance = Activator.CreateInstance(type);
                     try
                     {
-                        if (instance == null)
-                        {
-                            instance = Activator.CreateInstance(type);
-                        }
                         if (initMethod != null)
                         {
                             initMethod.Invoke(instance, null);
@@ -98,6 +126,17 @@ namespace AICADAssistant.Tests
                         Console.WriteLine("  ✗ " + method.Name + ": " + actualEx.Message);
                         Console.ResetColor();
                         failedTests++;
+                    }
+                    finally
+                    {
+                        if (cleanupMethod != null)
+                        {
+                            try
+                            {
+                                cleanupMethod.Invoke(instance, null);
+                            }
+                            catch { }
+                        }
                     }
                 }
             }

@@ -27,7 +27,11 @@ namespace AICADAssistant.Core.Gemini
 
     public class GeminiClient
     {
-        private static readonly HttpClient HttpClient = new HttpClient();
+        private static readonly HttpClient DefaultHttpClient = new HttpClient(new HttpClientHandler { UseProxy = false })
+        {
+            Timeout = System.Threading.Timeout.InfiniteTimeSpan
+        };
+        private readonly HttpClient _httpClient;
         private readonly CredentialService _credentialService;
         private readonly AppSettings _settings;
         private readonly JavaScriptSerializer _serializer;
@@ -43,6 +47,11 @@ namespace AICADAssistant.Core.Gemini
         }
 
         public GeminiClient(CredentialService credentialService, AppSettings settings)
+            : this(credentialService, settings, (HttpMessageHandler)null)
+        {
+        }
+
+        public GeminiClient(CredentialService credentialService, AppSettings settings, HttpMessageHandler handler)
         {
             if (credentialService == null)
                 throw new ArgumentNullException("credentialService");
@@ -55,6 +64,42 @@ namespace AICADAssistant.Core.Gemini
             {
                 MaxJsonLength = 50 * 1024 * 1024
             };
+
+            if (handler != null)
+            {
+                _httpClient = new HttpClient(handler, disposeHandler: true)
+                {
+                    Timeout = System.Threading.Timeout.InfiniteTimeSpan
+                };
+            }
+            else
+            {
+                _httpClient = DefaultHttpClient;
+            }
+
+            // Initialize connection indicator with configured status
+            bool hasKey = !string.IsNullOrWhiteSpace(_credentialService.LoadApiKey());
+            GeminiConnectionService.Instance.Initialize(hasKey, CurrentModel);
+        }
+
+        public GeminiClient(CredentialService credentialService, AppSettings settings, HttpClient httpClient)
+        {
+            if (credentialService == null)
+                throw new ArgumentNullException("credentialService");
+            if (settings == null)
+                throw new ArgumentNullException("settings");
+
+            _credentialService = credentialService;
+            _settings = settings;
+            _serializer = new JavaScriptSerializer
+            {
+                MaxJsonLength = 50 * 1024 * 1024
+            };
+
+            _httpClient = httpClient ?? DefaultHttpClient;
+
+            bool hasKey = !string.IsNullOrWhiteSpace(_credentialService.LoadApiKey());
+            GeminiConnectionService.Instance.Initialize(hasKey, CurrentModel);
         }
 
         public async Task<bool> TestConnectionAsync(CancellationToken ct = default(CancellationToken))
@@ -95,14 +140,39 @@ namespace AICADAssistant.Core.Gemini
             }
         }
 
-        public async Task<string> SendTextAsync(string prompt, List<ConversationMessage> history, CancellationToken ct = default(CancellationToken))
+        public async Task<string> SendChatAsync(string prompt, List<ConversationMessage> history, CancellationToken ct = default(CancellationToken))
         {
-            var request = CreateBaseRequest();
+            var request = new GeminiTextRequest();
+            request.generationConfig.temperature = 0.7;
+            request.generationConfig.maxOutputTokens = 4096;
+            request.generationConfig.responseMimeType = null; // Plain text / markdown (Conversational Fast Lane)
+            request.generationConfig.thinkingLevel = "low"; // Conversational: low thinking
 
-            // Append history if present
-            if (history != null)
+            var sysInstruction = new GeminiContent();
+            sysInstruction.role = "system";
+            sysInstruction.parts.Add(new GeminiPart
             {
-                for (int i = 0; i < history.Count; i++)
+                text = "Kamu adalah asisten percakapan AI CAD Assistant for SOLIDWORKS yang ramah, profesional, dan berpengetahuan teknik tinggi. " +
+                       "Berikan jawaban dan penjelasan teknis dalam bahasa Indonesia yang jelas, ringkas, terstruktur, dan mudah dibaca dalam format teks atau markdown biasa. " +
+                       "JANGAN membalas dalam format JSON atau CadSpec untuk pertanyaan percakapan umum."
+            });
+            request.systemInstruction = sysInstruction;
+
+            // Append history if present (limit to last 4 messages to reduce payload and latency)
+            if (history != null && history.Count > 0)
+            {
+                // Ensure history only contains messages prior to the current prompt.
+                // If caller passed a collection whose last element is the current prompt, exclude it to prevent duplicate messages.
+                int historyCount = history.Count;
+                if (historyCount > 0 &&
+                    history[historyCount - 1].Role == MessageRole.User &&
+                    string.Equals(history[historyCount - 1].Content, prompt, StringComparison.Ordinal))
+                {
+                    historyCount--;
+                }
+
+                int startIdx = Math.Max(0, historyCount - 4);
+                for (int i = startIdx; i < historyCount; i++)
                 {
                     var msg = history[i];
                     if (msg.Type == MessageType.Error) continue;
@@ -114,15 +184,58 @@ namespace AICADAssistant.Core.Gemini
                 }
             }
 
-            // Append current prompt
+            // Append current prompt (exactly once)
             var currentContent = new GeminiContent();
             currentContent.role = "user";
             currentContent.parts.Add(new GeminiPart { text = prompt });
             request.contents.Add(currentContent);
 
+            GeminiConnectionService.Instance.ReportConnecting(CurrentModel);
             string jsonBody = SerializeRequest(request);
             string responseJson = await ExecuteRequestAsync(jsonBody, ct).ConfigureAwait(false);
             return ParseResponseText(responseJson);
+        }
+
+        public async Task<string> SendCadPlanAsync(string prompt, ThinkingLevel thinkingLevel = ThinkingLevel.Low, CancellationToken ct = default(CancellationToken))
+        {
+            var request = new GeminiTextRequest();
+            request.generationConfig.temperature = 0.1;
+            request.generationConfig.maxOutputTokens = 8192;
+            request.generationConfig.responseMimeType = "application/json"; // Structured JSON for CAD Planner
+            request.generationConfig.thinkingLevel = AdaptiveThinkingManager.ToApiString(thinkingLevel);
+
+            var sysInstruction = new GeminiContent();
+            sysInstruction.role = "system";
+            sysInstruction.parts.Add(new GeminiPart
+            {
+                text = "Kamu adalah AI CAD Assistant untuk SOLIDWORKS. " +
+                       "Tugasmu adalah menganalisis teks instruksi atau gambar teknik dari pengguna, " +
+                       "mengidentifikasi dimensi, satuan, dan fitur geometri, " +
+                       "serta menyusun rencana CAD terstruktur (CadSpec) dalam format JSON murni. " +
+                       "JANGAN mengarang dimensi yang tidak ada. Jika ada dimensi kritis yang hilang, cantumkan di array 'unknowns'. " +
+                       "Gunakan satuan mm secara default."
+            });
+            request.systemInstruction = sysInstruction;
+
+            var currentContent = new GeminiContent();
+            currentContent.role = "user";
+            currentContent.parts.Add(new GeminiPart { text = prompt });
+            request.contents.Add(currentContent);
+
+            GeminiConnectionService.Instance.ReportConnecting(CurrentModel);
+            string jsonBody = SerializeRequest(request);
+            string responseJson = await ExecuteRequestAsync(jsonBody, ct).ConfigureAwait(false);
+            return ParseResponseText(responseJson);
+        }
+
+        public async Task<string> SendTextAsync(string prompt, List<ConversationMessage> history, CancellationToken ct = default(CancellationToken))
+        {
+            if (history != null && history.Count > 0)
+            {
+                return await SendChatAsync(prompt, history, ct).ConfigureAwait(false);
+            }
+            ThinkingLevel level = AdaptiveThinkingManager.DetermineLevel(prompt, false);
+            return await SendCadPlanAsync(prompt, level, ct).ConfigureAwait(false);
         }
 
         public async Task<string> SendWithImageAsync(string prompt, string base64ImageData, string mimeType, CancellationToken ct = default(CancellationToken))
@@ -241,14 +354,32 @@ namespace AICADAssistant.Core.Gemini
                 var gDict = new Dictionary<string, object>();
                 gDict["temperature"] = request.generationConfig.temperature;
                 gDict["maxOutputTokens"] = request.generationConfig.maxOutputTokens;
-                gDict["responseMimeType"] = request.generationConfig.responseMimeType;
+                if (!string.IsNullOrEmpty(request.generationConfig.responseMimeType))
+                {
+                    gDict["responseMimeType"] = request.generationConfig.responseMimeType;
+                }
+
+                // Adaptive thinking level (low / medium / high)
+                string thinkingLevel = !string.IsNullOrEmpty(request.generationConfig.thinkingLevel)
+                    ? request.generationConfig.thinkingLevel
+                    : "low";
+
+                if (CurrentModel.IndexOf("flash-lite", StringComparison.OrdinalIgnoreCase) >= 0 && thinkingLevel == "low")
+                {
+                    thinkingLevel = "minimal";
+                }
+
+                var tDict = new Dictionary<string, object>();
+                tDict["thinkingLevel"] = thinkingLevel;
+                gDict["thinkingConfig"] = tDict;
+
                 rootDict["generationConfig"] = gDict;
             }
 
             return _serializer.Serialize(rootDict);
         }
 
-        private string BuildApiUrl()
+        private string BuildApiUrl(string modelOverride = null)
         {
             string apiKey = _credentialService.LoadApiKey();
             if (string.IsNullOrWhiteSpace(apiKey))
@@ -256,120 +387,336 @@ namespace AICADAssistant.Core.Gemini
                 throw GeminiException.AuthException("API Key belum disetel.");
             }
 
-            string model = CurrentModel;
+            string model = !string.IsNullOrWhiteSpace(modelOverride) ? modelOverride.Trim() : CurrentModel;
             return string.Format("https://generativelanguage.googleapis.com/v1beta/models/{0}:generateContent?key={1}", model, apiKey);
+        }
+
+        private string RedactSensitiveData(string input)
+        {
+            if (string.IsNullOrEmpty(input))
+                return input;
+
+            string sanitized = LoggingService.RedactApiKey(input);
+            try
+            {
+                string currentKey = _credentialService != null ? _credentialService.LoadApiKey() : null;
+                if (!string.IsNullOrWhiteSpace(currentKey) && currentKey.Length >= 6)
+                {
+                    sanitized = sanitized.Replace(currentKey, "[REDACTED_API_KEY]");
+                }
+            }
+            catch { }
+            return sanitized;
         }
 
         private async Task<string> ExecuteRequestAsync(string jsonBody, CancellationToken ct)
         {
-            int maxRetries = Math.Max(0, _settings.MaxRetryAttempts);
+            int timeoutSec = _settings != null && _settings.RequestTimeoutSeconds > 0
+                ? _settings.RequestTimeoutSeconds
+                : 120;
+
+            int maxRetries = Math.Min(2, Math.Max(0, _settings != null ? _settings.MaxRetryAttempts : 2));
             int attempt = 0;
+            string currentActiveModel = CurrentModel;
+            bool triedFallback = false;
 
-            while (true)
+            var overallSw = System.Diagnostics.Stopwatch.StartNew();
+
+            using (var timeoutCts = new CancellationTokenSource())
+            using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token))
             {
-                attempt++;
-                string url = BuildApiUrl();
-                bool shouldRetry = false;
-                int retryDelayMs = 0;
+                timeoutCts.CancelAfter(TimeSpan.FromSeconds(timeoutSec));
+                CancellationToken effectiveToken = linkedCts.Token;
 
-                try
+                while (true)
                 {
-                    using (var content = new StringContent(jsonBody, Encoding.UTF8, "application/json"))
-                    using (var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(_settings.RequestTimeoutSeconds)))
-                    using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token))
+                    attempt++;
+                    string url = BuildApiUrl(currentActiveModel);
+                    bool shouldRetry = false;
+                    int retryDelayMs = 0;
+
+                    LoggingService.Instance.Info(string.Format("[GEMINI_REQUEST] Mengirim request ke model '{0}' (Percobaan {1}/{2})...",
+                        currentActiveModel, attempt, maxRetries + 1));
+
+                    var attemptSw = System.Diagnostics.Stopwatch.StartNew();
+                    try
                     {
-                        var response = await HttpClient.PostAsync(url, content, linkedCts.Token).ConfigureAwait(false);
-
-                        if (response.IsSuccessStatusCode)
+                        using (var content = new StringContent(jsonBody, Encoding.UTF8, "application/json"))
+                        using (var response = await _httpClient.PostAsync(url, content, effectiveToken).ConfigureAwait(false))
                         {
-                            return await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-                        }
+                            attemptSw.Stop();
 
-                        int statusCode = (int)response.StatusCode;
-                        string errorContent = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-
-                        // Parse structured Gemini error response if possible
-                        string serverMessage = null;
-                        string serverStatus = null;
-                        try
-                        {
-                            var errResp = _serializer.Deserialize<GeminiErrorResponse>(errorContent);
-                            if (errResp != null && errResp.error != null)
+                            // ── Deadline Check 1: Immediately after PostAsync finishes ──
+                            if (ct.IsCancellationRequested)
                             {
-                                serverMessage = errResp.error.message;
-                                serverStatus = errResp.error.status;
+                                overallSw.Stop();
+                                LoggingService.Instance.Info(string.Format("[GEMINI_CANCEL] Permintaan dibatalkan oleh pengguna setelah PostAsync (elapsed: {0} ms).", overallSw.ElapsedMilliseconds));
+                                throw new OperationCanceledException(ct);
                             }
-                        }
-                        catch { }
-
-                        // 404: Model Not Found
-                        if (statusCode == 404 || string.Equals(serverStatus, "NOT_FOUND", StringComparison.OrdinalIgnoreCase))
-                        {
-                            throw GeminiException.ModelNotFoundException(CurrentModel, serverMessage ?? errorContent);
-                        }
-
-                        // 401/403: Authentication or Permission error
-                        if (statusCode == 401 || statusCode == 403 ||
-                            string.Equals(serverStatus, "UNAUTHENTICATED", StringComparison.OrdinalIgnoreCase) ||
-                            string.Equals(serverStatus, "PERMISSION_DENIED", StringComparison.OrdinalIgnoreCase))
-                        {
-                            throw GeminiException.AuthException(serverMessage ?? "Kredensial atau hak akses ditolak.");
-                        }
-
-                        // 429: Rate Limit / Quota Exceeded
-                        if (statusCode == 429 || string.Equals(serverStatus, "RESOURCE_EXHAUSTED", StringComparison.OrdinalIgnoreCase))
-                        {
-                            if (attempt <= maxRetries)
+                            if (timeoutCts.IsCancellationRequested)
                             {
-                                LoggingService.Instance.Warning(string.Format("Rate limit Gemini tercapai untuk model '{0}'. Mencoba ulang ({1}/{2})...", CurrentModel, attempt, maxRetries));
+                                overallSw.Stop();
+                                string msg = string.Format("Permintaan ke Gemini API melebihi batas waktu ({0} detik) untuk model '{1}'.", timeoutSec, currentActiveModel);
+                                LoggingService.Instance.Warning(string.Format("[GEMINI_TIMEOUT] {0} Durasi: {1} ms.", msg, overallSw.ElapsedMilliseconds));
+                                GeminiConnectionService.Instance.ReportError(new Exception(msg), 408, currentActiveModel, overallSw.ElapsedMilliseconds);
+                                throw GeminiException.TimeoutException(msg);
+                            }
+
+                            if (response.IsSuccessStatusCode)
+                            {
+                                string responseJson = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+
+                                // ── Deadline Check 2: Immediately after reading response body ──
+                                if (ct.IsCancellationRequested)
+                                {
+                                    overallSw.Stop();
+                                    LoggingService.Instance.Info(string.Format("[GEMINI_CANCEL] Permintaan dibatalkan oleh pengguna setelah membaca respons (elapsed: {0} ms).", overallSw.ElapsedMilliseconds));
+                                    throw new OperationCanceledException(ct);
+                                }
+                                if (timeoutCts.IsCancellationRequested)
+                                {
+                                    overallSw.Stop();
+                                    string msg = string.Format("Permintaan ke Gemini API melebihi batas waktu ({0} detik) untuk model '{1}'.", timeoutSec, currentActiveModel);
+                                    LoggingService.Instance.Warning(string.Format("[GEMINI_TIMEOUT] {0} Durasi: {1} ms.", msg, overallSw.ElapsedMilliseconds));
+                                    GeminiConnectionService.Instance.ReportError(new Exception(msg), 408, currentActiveModel, overallSw.ElapsedMilliseconds);
+                                    throw GeminiException.TimeoutException(msg);
+                                }
+
+                                overallSw.Stop();
+                                int promptTokens = 0, candidateTokens = 0, thoughtTokens = 0, totalTokens = 0;
+                                try
+                                {
+                                    var parsedResp = _serializer.Deserialize<GeminiResponse>(responseJson);
+                                    if (parsedResp != null && parsedResp.usageMetadata != null)
+                                    {
+                                        promptTokens = parsedResp.usageMetadata.promptTokenCount;
+                                        candidateTokens = parsedResp.usageMetadata.candidatesTokenCount;
+                                        thoughtTokens = parsedResp.usageMetadata.thoughtsTokenCount;
+                                        totalTokens = parsedResp.usageMetadata.totalTokenCount > 0
+                                            ? parsedResp.usageMetadata.totalTokenCount
+                                            : (promptTokens + candidateTokens + thoughtTokens);
+                                    }
+                                }
+                                catch { }
+
+                                LoggingService.Instance.Info(string.Format("[GEMINI_RESPONSE] Berhasil diterima dalam {0} ms dari model '{1}'. Status: {2}, PromptTokens: {3}, CandidateTokens: {4}, ThoughtTokens: {5}, TotalTokens: {6}",
+                                    overallSw.ElapsedMilliseconds, currentActiveModel, (int)response.StatusCode, promptTokens, candidateTokens, thoughtTokens, totalTokens));
+
+                                GeminiConnectionService.Instance.ReportConnected(currentActiveModel, overallSw.ElapsedMilliseconds);
+                                return responseJson;
+                            }
+
+                            int statusCode = (int)response.StatusCode;
+                            string rawErrorContent = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                            string errorContent = RedactSensitiveData(rawErrorContent);
+
+                            // Parse structured Gemini error response if possible
+                            string serverMessage = null;
+                            string serverStatus = null;
+                            try
+                            {
+                                var errResp = _serializer.Deserialize<GeminiErrorResponse>(rawErrorContent);
+                                if (errResp != null && errResp.error != null)
+                                {
+                                    serverMessage = RedactSensitiveData(errResp.error.message);
+                                    serverStatus = errResp.error.status;
+                                }
+                            }
+                            catch { }
+
+                            LoggingService.Instance.Warning(string.Format("[GEMINI_ERROR] HTTP {0} dalam {1} ms: {2}",
+                                statusCode, attemptSw.ElapsedMilliseconds, errorContent));
+
+                            // 404: Model Not Found
+                            if (statusCode == 404 || string.Equals(serverStatus, "NOT_FOUND", StringComparison.OrdinalIgnoreCase))
+                            {
+                                overallSw.Stop();
+                                string detail = serverMessage ?? errorContent;
+                                GeminiConnectionService.Instance.ReportError(new Exception(detail), 404, currentActiveModel, overallSw.ElapsedMilliseconds);
+                                throw GeminiException.ModelNotFoundException(currentActiveModel, detail);
+                            }
+
+                            // 401/403: Authentication or Permission error
+                            if (statusCode == 401 || statusCode == 403 ||
+                                string.Equals(serverStatus, "UNAUTHENTICATED", StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(serverStatus, "PERMISSION_DENIED", StringComparison.OrdinalIgnoreCase))
+                            {
+                                overallSw.Stop();
+                                string detail = serverMessage ?? "Kredensial atau hak akses ditolak.";
+                                GeminiConnectionService.Instance.ReportError(new Exception(detail), statusCode, currentActiveModel, overallSw.ElapsedMilliseconds);
+                                throw GeminiException.AuthException(detail);
+                            }
+
+                            // 429: Rate Limit / Quota Exceeded (e.g. daily free limit exceeded on 3.8-flash)
+                            if (statusCode == 429 || string.Equals(serverStatus, "RESOURCE_EXHAUSTED", StringComparison.OrdinalIgnoreCase))
+                            {
+                                if (!triedFallback && currentActiveModel != AppSettings.DefaultGeminiModel && !timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
+                                {
+                                    LoggingService.Instance.Warning(string.Format("Model '{0}' mencapai limit kuota harian (429). Beralih otomatis ke model fallback '{1}'...",
+                                        currentActiveModel, AppSettings.DefaultGeminiModel));
+                                    currentActiveModel = AppSettings.DefaultGeminiModel;
+                                    triedFallback = true;
+                                    shouldRetry = true;
+                                    retryDelayMs = 1000;
+                                }
+                                else if (attempt <= maxRetries && !timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
+                                {
+                                    LoggingService.Instance.Warning(string.Format("Rate limit Gemini tercapai untuk model '{0}'. Mencoba ulang ({1}/{2})...", currentActiveModel, attempt, maxRetries));
+                                    shouldRetry = true;
+                                    retryDelayMs = 2000 * attempt;
+                                }
+                                else
+                                {
+                                    overallSw.Stop();
+                                    string detail = serverMessage ?? "Rate limit exceeded";
+                                    GeminiConnectionService.Instance.ReportError(new Exception(detail), 429, currentActiveModel, overallSw.ElapsedMilliseconds);
+                                    throw GeminiException.RateLimitException(detail);
+                                }
+                            }
+                            // 503: High demand / Server unavailable - Attempt fallback model if not already attempted
+                            else if (statusCode == 503 || string.Equals(serverStatus, "UNAVAILABLE", StringComparison.OrdinalIgnoreCase))
+                            {
+                                if (!triedFallback && currentActiveModel != AppSettings.DefaultGeminiModel && !timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
+                                {
+                                    LoggingService.Instance.Warning(string.Format("Model '{0}' 503 High Demand. Beralih otomatis ke model fallback '{1}'...",
+                                        currentActiveModel, AppSettings.DefaultGeminiModel));
+                                    currentActiveModel = AppSettings.DefaultGeminiModel;
+                                    triedFallback = true;
+                                    shouldRetry = true;
+                                    retryDelayMs = 1000;
+                                }
+                                else if (attempt <= maxRetries && !timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
+                                {
+                                    LoggingService.Instance.Warning(string.Format("Server Gemini mengalami gangguan (503). Mencoba ulang ({1}/{2})...", attempt, maxRetries));
+                                    shouldRetry = true;
+                                    retryDelayMs = 2000 * attempt;
+                                }
+                                else
+                                {
+                                    overallSw.Stop();
+                                    string detail = serverMessage ?? "High demand";
+                                    GeminiConnectionService.Instance.ReportError(new Exception(detail), 503, currentActiveModel, overallSw.ElapsedMilliseconds);
+                                    throw GeminiException.ServerUnavailableException(currentActiveModel, detail);
+                                }
+                            }
+                            // Other 5xx: Server Error
+                            else if (statusCode >= 500 && attempt <= maxRetries && !timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
+                            {
+                                LoggingService.Instance.Warning(string.Format("Server Gemini mengalami gangguan ({0}). Mencoba ulang ({1}/{2})...", statusCode, attempt, maxRetries));
                                 shouldRetry = true;
                                 retryDelayMs = 2000 * attempt;
                             }
                             else
                             {
-                                throw GeminiException.RateLimitException(serverMessage);
+                                overallSw.Stop();
+                                string detail = serverMessage ?? errorContent;
+                                GeminiConnectionService.Instance.ReportError(new Exception(detail), statusCode, currentActiveModel, overallSw.ElapsedMilliseconds);
+                                throw new GeminiException(string.Format("Gemini API Error ({0}): {1}", statusCode, detail), statusCode, serverStatus: serverStatus);
                             }
                         }
-                        // 5xx: Server Error
-                        else if (statusCode >= 500 && attempt <= maxRetries)
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        attemptSw.Stop();
+                        overallSw.Stop();
+
+                        // Check if user cancellation was requested
+                        if (ct.IsCancellationRequested)
                         {
-                            LoggingService.Instance.Warning(string.Format("Server Gemini mengalami gangguan ({0}). Mencoba ulang ({1}/{2})...", statusCode, attempt, maxRetries));
+                            LoggingService.Instance.Info(string.Format("[GEMINI_CANCEL] Permintaan dibatalkan oleh pengguna (elapsed: {0} ms).", overallSw.ElapsedMilliseconds));
+                            throw;
+                        }
+
+                        // Check if request timeout expired
+                        if (timeoutCts.IsCancellationRequested)
+                        {
+                            string msg = string.Format("Permintaan ke Gemini API melebihi batas waktu ({0} detik) untuk model '{1}'.", timeoutSec, currentActiveModel);
+                            LoggingService.Instance.Warning(string.Format("[GEMINI_TIMEOUT] {0} Durasi: {1} ms.", msg, overallSw.ElapsedMilliseconds));
+                            GeminiConnectionService.Instance.ReportError(new Exception(msg), 408, currentActiveModel, overallSw.ElapsedMilliseconds);
+                            throw GeminiException.TimeoutException(msg);
+                        }
+
+                        throw;
+                    }
+                    catch (HttpRequestException ex)
+                    {
+                        attemptSw.Stop();
+
+                        // 1. User cancellation: Highest priority
+                        if (ct.IsCancellationRequested)
+                        {
+                            overallSw.Stop();
+                            LoggingService.Instance.Info(string.Format("[GEMINI_CANCEL] Permintaan dibatalkan oleh pengguna (elapsed: {0} ms).", overallSw.ElapsedMilliseconds));
+                            throw new OperationCanceledException(ct);
+                        }
+
+                        // 2. Request timeout: Second priority
+                        if (timeoutCts.IsCancellationRequested)
+                        {
+                            overallSw.Stop();
+                            string msg = string.Format("Permintaan ke Gemini API melebihi batas waktu ({0} detik) untuk model '{1}'.", timeoutSec, currentActiveModel);
+                            LoggingService.Instance.Warning(string.Format("[GEMINI_TIMEOUT] {0} Durasi: {1} ms.", msg, overallSw.ElapsedMilliseconds));
+                            GeminiConnectionService.Instance.ReportError(new Exception(msg), 408, currentActiveModel, overallSw.ElapsedMilliseconds);
+                            throw GeminiException.TimeoutException(msg);
+                        }
+
+                        // 3. Network retry or network failure: Third priority
+                        if (attempt <= maxRetries && !timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
+                        {
                             shouldRetry = true;
-                            retryDelayMs = 2000 * attempt;
+                            retryDelayMs = 1500 * attempt;
                         }
                         else
                         {
-                            string detail = serverMessage ?? errorContent;
-                            throw new GeminiException(string.Format("Gemini API Error ({0}): {1}", statusCode, detail), statusCode, serverStatus: serverStatus);
+                            overallSw.Stop();
+                            string safeMsg = RedactSensitiveData(ex.Message);
+                            LoggingService.Instance.Error(string.Format("[GEMINI_NETWORK_ERROR] Gagal menghubungi server: {0}", safeMsg));
+                            GeminiConnectionService.Instance.ReportError(new Exception(safeMsg), 0, currentActiveModel, overallSw.ElapsedMilliseconds);
+                            throw GeminiException.NetworkException(safeMsg);
                         }
                     }
-                }
-                catch (OperationCanceledException)
-                {
-                    if (!ct.IsCancellationRequested)
-                    {
-                        throw GeminiException.TimeoutException(_settings.RequestTimeoutSeconds);
-                    }
-                    throw;
-                }
-                catch (HttpRequestException ex)
-                {
-                    if (attempt <= maxRetries)
-                    {
-                        shouldRetry = true;
-                        retryDelayMs = 2000 * attempt;
-                    }
-                    else
-                    {
-                        string safeMsg = LoggingService.RedactApiKey(ex.Message);
-                        throw GeminiException.NetworkException(safeMsg);
-                    }
-                }
 
-                if (shouldRetry)
-                {
-                    await Task.Delay(retryDelayMs, ct).ConfigureAwait(false);
-                    continue;
+                    if (shouldRetry)
+                    {
+                        // Deadline check: do NOT retry if timeout or cancellation was triggered
+                        if (ct.IsCancellationRequested)
+                        {
+                            overallSw.Stop();
+                            LoggingService.Instance.Info(string.Format("[GEMINI_CANCEL] Permintaan dibatalkan oleh pengguna (elapsed: {0} ms).", overallSw.ElapsedMilliseconds));
+                            throw new OperationCanceledException(ct);
+                        }
+                        if (timeoutCts.IsCancellationRequested)
+                        {
+                            overallSw.Stop();
+                            string msg = string.Format("Permintaan ke Gemini API melebihi batas waktu ({0} detik) untuk model '{1}'.", timeoutSec, currentActiveModel);
+                            LoggingService.Instance.Warning(string.Format("[GEMINI_TIMEOUT] {0} Durasi: {1} ms.", msg, overallSw.ElapsedMilliseconds));
+                            GeminiConnectionService.Instance.ReportError(new Exception(msg), 408, currentActiveModel, overallSw.ElapsedMilliseconds);
+                            throw GeminiException.TimeoutException(msg);
+                        }
+
+                        try
+                        {
+                            await Task.Delay(retryDelayMs, effectiveToken).ConfigureAwait(false);
+                            continue;
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            overallSw.Stop();
+                            if (ct.IsCancellationRequested)
+                            {
+                                LoggingService.Instance.Info(string.Format("[GEMINI_CANCEL] Permintaan dibatalkan oleh pengguna saat jeda retry (elapsed: {0} ms).", overallSw.ElapsedMilliseconds));
+                                throw;
+                            }
+                            if (timeoutCts.IsCancellationRequested)
+                            {
+                                string msg = string.Format("Permintaan ke Gemini API melebihi batas waktu ({0} detik) saat jeda retry untuk model '{1}'.", timeoutSec, currentActiveModel);
+                                LoggingService.Instance.Warning(string.Format("[GEMINI_TIMEOUT] {0} Durasi: {1} ms.", msg, overallSw.ElapsedMilliseconds));
+                                GeminiConnectionService.Instance.ReportError(new Exception(msg), 408, currentActiveModel, overallSw.ElapsedMilliseconds);
+                                throw GeminiException.TimeoutException(msg);
+                            }
+                            throw;
+                        }
+                    }
                 }
             }
         }

@@ -11,6 +11,14 @@ $ErrorActionPreference = "Stop"
 
 $guid = "{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}"
 
+# 0. Periksa status SOLIDWORKS
+$swProcesses = Get-Process -Name "SLDWORKS" -ErrorAction SilentlyContinue
+if ($swProcesses) {
+    Write-Warning "SOLIDWORKS sedang berjalan (PID: $($swProcesses.Id -join ', '))."
+    Write-Warning "Mohon tutup SOLIDWORKS terlebih dahulu sebelum menghapus registrasi Add-in."
+    exit 1
+}
+
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = Split-Path -Parent $scriptDir
 $dllPath = Join-Path $projectRoot "src\AICADAssistant.AddIn\bin\$Configuration\AICADAssistant.AddIn.dll"

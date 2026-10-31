@@ -37,6 +37,8 @@ namespace AICADAssistant.Core.Models
         public bool RequiresConfirmation { get; set; }
         public List<string> ExportTargets { get; set; }
         public string Notes { get; set; }
+        public string TargetDocumentId { get; set; }
+        public string TargetDocumentTitle { get; set; }
 
         public CadSpec()
         {

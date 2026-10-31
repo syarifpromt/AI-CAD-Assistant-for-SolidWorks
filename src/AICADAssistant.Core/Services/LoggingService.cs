@@ -54,8 +54,11 @@ namespace AICADAssistant.Core.Services
             // Redact URL query parameter e.g. key=AIzaSy... or ?key=... or &key=...
             string sanitized = Regex.Replace(input, @"([?&]key=)[^&""'\s]+", "$1[REDACTED]");
 
-            // Redact standard Google API Key pattern (AIzaSy...)
-            sanitized = Regex.Replace(sanitized, @"AIzaSy[A-Za-z0-9_\-]+", "[REDACTED_API_KEY]");
+            // Redact JSON/header key patterns e.g. "apiKey": "..." or api_key=...
+            sanitized = Regex.Replace(sanitized, @"(api_?key\s*[:=]\s*[""']?)[^""'\s,}]+", "$1[REDACTED]", RegexOptions.IgnoreCase);
+
+            // Redact Google API Key pattern (starts with AIza...)
+            sanitized = Regex.Replace(sanitized, @"AIza[A-Za-z0-9_\-]{16,}", "[REDACTED_API_KEY]");
 
             return sanitized;
         }
@@ -97,6 +100,11 @@ namespace AICADAssistant.Core.Services
             Log("WARN", message);
         }
 
+        public void Warn(string message)
+        {
+            Warning(message);
+        }
+
         public void Error(string message, Exception ex = null)
         {
             Log("ERROR", message, ex);
@@ -105,6 +113,36 @@ namespace AICADAssistant.Core.Services
         public void Debug(string message)
         {
             Log("DEBUG", message);
+        }
+
+        public void LogDiagnostic(AICADAssistant.Core.Models.Contracts.CADDiagnostic diagnostic)
+        {
+            if (diagnostic == null) return;
+            string level = diagnostic.Severity == AICADAssistant.Core.Models.Contracts.DiagnosticSeverity.Error ||
+                           diagnostic.Severity == AICADAssistant.Core.Models.Contracts.DiagnosticSeverity.Fatal ? "ERROR" :
+                           (diagnostic.Severity == AICADAssistant.Core.Models.Contracts.DiagnosticSeverity.Warning ? "WARN" : "INFO");
+            Log(level, string.Format("[DIAGNOSTIC] {0}", diagnostic));
+        }
+
+        public void LogPipeline(string stage, string status, string details, long durationMs = -1, Exception ex = null)
+        {
+            string durStr = durationMs >= 0 ? string.Format(" [{0} ms]", durationMs) : "";
+            string msg = string.Format("[PIPELINE] {0} -> {1}{2}: {3}", stage, status, durStr, details);
+            Log(status == "FAILED" || status == "ERROR" ? "ERROR" : (status == "WARN" ? "WARN" : "INFO"), msg, ex);
+
+            // Also mirror to unified addin.log in %APPDATA%\AICADAssistant
+            try
+            {
+                string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+                string addinLog = Path.Combine(appData, "AICADAssistant", "addin.log");
+                string timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff");
+                string line = string.Format("[{0}] {1}{2}", timestamp, RedactApiKey(msg), Environment.NewLine);
+                lock (LockObj)
+                {
+                    File.AppendAllText(addinLog, line);
+                }
+            }
+            catch { }
         }
 
         private void CleanOldLogs(int daysToKeep)

@@ -98,11 +98,9 @@ namespace AICADAssistant.AddIn.UI.ViewModels
 
             AvailableModels = new ObservableCollection<string>
             {
-                "gemini-3.8-flash",
                 "gemini-3.5-flash-lite",
+                "gemini-3.8-flash",
                 "gemini-3.1-pro-preview",
-                "gemini-2.5-pro",
-                "gemini-2.5-flash",
                 "gemini-flash-latest"
             };
 
@@ -141,8 +139,8 @@ namespace AICADAssistant.AddIn.UI.ViewModels
             _settings.GeminiModel = cleanModel;
             _settings.DefaultUnit = DefaultUnit;
             _settings.OutputDirectory = OutputDirectory;
-            _settings.RequestTimeoutSeconds = RequestTimeoutSeconds;
-            _settings.MaxRetryAttempts = MaxRetryAttempts;
+            if (_settings.RequestTimeoutSeconds <= 0) _settings.RequestTimeoutSeconds = 120;
+            if (_settings.MaxRetryAttempts <= 0) _settings.MaxRetryAttempts = 2;
             _settings.Save();
 
             ConnectionStatus = string.Format("Pengaturan berhasil disimpan. Model aktif: '{0}'.", cleanModel);

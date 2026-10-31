@@ -38,6 +38,16 @@ namespace AICADAssistant.Core.Models
 
         public bool IsError { get; set; }
 
+        public bool IsUser
+        {
+            get { return Role == MessageRole.User; }
+        }
+
+        public bool IsAssistant
+        {
+            get { return Role == MessageRole.Assistant || Role == MessageRole.System; }
+        }
+
         // ── Constructors ─────────────────────────────────────────────────────────
 
         /// <summary>Default constructor required for serialisation.</summary>

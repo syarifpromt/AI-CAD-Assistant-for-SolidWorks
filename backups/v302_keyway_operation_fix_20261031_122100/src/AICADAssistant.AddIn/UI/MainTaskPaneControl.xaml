@@ -1,0 +1,255 @@
+<UserControl x:Class="AICADAssistant.AddIn.UI.MainTaskPaneControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+             xmlns:conv="clr-namespace:AICADAssistant.AddIn.UI.Converters"
+             xmlns:controls="clr-namespace:AICADAssistant.AddIn.UI.Controls"
+             xmlns:wfi="clr-namespace:System.Windows.Forms.Integration;assembly=WindowsFormsIntegration"
+             xmlns:wfctrl="clr-namespace:AICADAssistant.AddIn.UI.Controls"
+             mc:Ignorable="d" 
+             d:DesignHeight="700" d:DesignWidth="360"
+             Background="#FFFFFF"
+             FontFamily="Segoe UI" FontSize="12">
+
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="Themes/RedWhiteTheme.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+            <conv:BoolToVisibilityConverter x:Key="BoolToVis" />
+            <conv:InverseBoolToVisibilityConverter x:Key="InvBoolToVis" />
+            <conv:StatusToColorConverter x:Key="StatusToColor" />
+            <conv:RoleToVisibilityConverter x:Key="RoleToVis" />
+            <conv:GeminiConnectionStatusToColorConverter x:Key="ConnColorConv" />
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <!-- 0: Header -->
+            <RowDefinition Height="42" />
+            <!-- 1: Permanent Gemini Connection Indicator -->
+            <RowDefinition Height="Auto" />
+            <!-- 2: Message History -->
+            <RowDefinition Height="*" />
+            <!-- 3: Attachment preview -->
+            <RowDefinition Height="Auto" />
+            <!-- 4: Action Buttons (Contextual) -->
+            <RowDefinition Height="Auto" />
+            <!-- 5: Status Indicator -->
+            <RowDefinition Height="28" />
+            <!-- 6: Input Area -->
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <Border Grid.Row="0" Background="{StaticResource DarkRedBrush}" Padding="10,0">
+            <Grid VerticalAlignment="Center">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <!-- Red cube logo mark -->
+                    <Border Width="16" Height="16" Background="White" CornerRadius="2" Margin="0,0,8,0">
+                        <TextBlock Text="AI" Foreground="{StaticResource DarkRedBrush}" FontWeight="Bold" FontSize="9" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <TextBlock Text="AI CAD Assistant" FontWeight="Bold" FontSize="13" Foreground="White" VerticalAlignment="Center" />
+                    <Border Background="#33FFFFFF" CornerRadius="3" Margin="8,0,0,0" Padding="4,1" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding AppVersionDisplay}" FontSize="10" FontWeight="SemiBold" Foreground="White" />
+                    </Border>
+                </StackPanel>
+
+                <!-- Settings Button -->
+                <Button Grid.Column="1" Command="{Binding OpenSettingsCommand}" Background="Transparent" BorderThickness="0" Cursor="Hand" Padding="4">
+                    <TextBlock Text="⚙" FontSize="16" Foreground="White" />
+                </Button>
+            </Grid>
+        </Border>
+
+        <!-- Permanent Gemini Connection Indicator Strip -->
+        <Border Grid.Row="1" Background="#F8F9FA" BorderBrush="#E0E0E0" BorderThickness="0,0,0,1" Padding="10,5">
+            <Grid VerticalAlignment="Center">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <!-- Connection Status LED -->
+                <Ellipse Grid.Column="0" Width="8" Height="8" Margin="0,0,6,0"
+                         Fill="{Binding ConnectionStatus, Converter={StaticResource ConnColorConv}}" />
+
+                <!-- Connection Status Text with Active Model and Latency (Never shows raw API key) -->
+                <TextBlock Grid.Column="1" Text="{Binding ConnectionStatusLabel}"
+                           FontSize="10.5" Foreground="#444444"
+                           TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+            </Grid>
+        </Border>
+
+        <!-- Message History -->
+        <ScrollViewer x:Name="ChatScrollViewer" Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="8">
+            <ItemsControl ItemsSource="{Binding Messages}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Grid Margin="0,4">
+                            <!-- User Message (Right-aligned, Light Red) -->
+                            <Border MaxWidth="280" HorizontalAlignment="Right"
+                                    Background="{StaticResource LightRedBrush}"
+                                    BorderBrush="{StaticResource PrimaryRedBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="6,6,0,6"
+                                    Padding="10,8"
+                                    Visibility="{Binding Role, Converter={StaticResource RoleToVis}, ConverterParameter=User}">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Grid.Row="0" Text="{Binding Content}" TextWrapping="Wrap" Foreground="{StaticResource TextDarkBrush}" />
+                                    <TextBlock Grid.Row="1" Text="{Binding Timestamp, StringFormat='{}{0:HH:mm}'}" FontSize="10" Foreground="{StaticResource DarkGrayBrush}" HorizontalAlignment="Right" Margin="0,4,0,0" />
+                                </Grid>
+                            </Border>
+
+                            <!-- Assistant Message (Left-aligned, Light Gray) -->
+                            <Border MaxWidth="290" HorizontalAlignment="Left"
+                                    Background="{StaticResource LightGrayBrush}"
+                                    BorderBrush="{StaticResource MediumGrayBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="6,6,6,0"
+                                    Padding="10,8"
+                                    Visibility="{Binding Role, Converter={StaticResource RoleToVis}, ConverterParameter=Assistant}">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsError}" Value="True">
+                                                <Setter Property="BorderBrush" Value="{StaticResource PrimaryRedBrush}" />
+                                                <Setter Property="Background" Value="#FFF0F0" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Grid.Row="0" Text="{Binding Content}" TextWrapping="Wrap" Foreground="{StaticResource TextDarkBrush}" />
+                                    <TextBlock Grid.Row="1" Text="{Binding Timestamp, StringFormat='{}{0:HH:mm}'}" FontSize="10" Foreground="{StaticResource DarkGrayBrush}" HorizontalAlignment="Left" Margin="0,4,0,0" />
+                                </Grid>
+                            </Border>
+                        </Grid>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+
+        <!-- Attachment Preview Card -->
+        <Border Grid.Row="3" Background="{StaticResource LightGrayBrush}" BorderBrush="{StaticResource MediumGrayBrush}" BorderThickness="0,1" Padding="8,6"
+                Visibility="{Binding HasAttachedFile, Converter={StaticResource BoolToVis}}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.Column="0" Text="📎" FontSize="14" VerticalAlignment="Center" Margin="0,0,6,0" />
+
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding AttachedFileName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Text="{Binding AttachedFilePreview}" FontSize="11" Foreground="{StaticResource DarkGrayBrush}" />
+                </StackPanel>
+
+                <Button Grid.Column="2" Content="✕" Command="{Binding RemoveAttachmentCommand}" Background="Transparent" BorderThickness="0" Foreground="{StaticResource DarkGrayBrush}" Cursor="Hand" Padding="4" />
+            </Grid>
+        </Border>
+
+        <!-- Contextual Action Buttons -->
+        <Border Grid.Row="4" Background="#FAFAFA" BorderBrush="{StaticResource MediumGrayBrush}" BorderThickness="0,1" Padding="8,6">
+            <WrapPanel Orientation="Horizontal" HorizontalAlignment="Center">
+
+                <!-- Explicit Analyze Button (Images are ONLY sent to Gemini when user clicks this!) -->
+                <Button Content="🔍 Analisis Gambar" Style="{StaticResource PrimaryButtonStyle}" Command="{Binding AnalyzeFileCommand}"
+                        Visibility="{Binding HasAttachedFile, Converter={StaticResource BoolToVis}}" Margin="4,2" />
+
+                <!-- Generate Model Button (optional manual rebuild if desired) -->
+                <Button Content="⚙ Buat Ulang Model" Style="{StaticResource SecondaryButtonStyle}" Command="{Binding BuildModelCommand}"
+                        Visibility="{Binding CanBuildModel, Converter={StaticResource BoolToVis}}" Margin="4,2" />
+
+                <!-- Cancel Button -->
+                <Button Content="✖ Batalkan" Style="{StaticResource SecondaryButtonStyle}" Command="{Binding CancelCommand}"
+                        Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}" Margin="4,2" />
+
+                <!-- Export Buttons -->
+                <Button Content="Ekspor STEP" Style="{StaticResource SecondaryButtonStyle}" Command="{Binding ExportStepCommand}" Margin="4,2" />
+                <Button Content="Ekspor STL" Style="{StaticResource SecondaryButtonStyle}" Command="{Binding ExportStlCommand}" Margin="4,2" />
+
+            </WrapPanel>
+        </Border>
+
+        <!-- Status Indicator Bar -->
+        <Border Grid.Row="5" Background="#EFEFEF" Padding="10,0" BorderBrush="{StaticResource MediumGrayBrush}" BorderThickness="0,1,0,0">
+            <Grid VerticalAlignment="Center">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <!-- Status LED dot -->
+                <Ellipse Grid.Column="0" Width="8" Height="8" Margin="0,0,8,0"
+                         Fill="{Binding StatusType, Converter={StaticResource StatusToColor}}" />
+
+                <TextBlock Grid.Column="1" Text="{Binding OperationStatus}" FontSize="11" FontWeight="SemiBold"
+                           Foreground="{Binding StatusType, Converter={StaticResource StatusToColor}}"
+                           TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+
+                <!-- Build Version Indicator -->
+                <TextBlock Grid.Column="2" Text="{Binding AppVersionDisplay}" FontSize="10" Foreground="#888888" VerticalAlignment="Center" Margin="6,0,0,0" />
+            </Grid>
+        </Border>
+
+        <!-- Input Area -->
+        <Border Grid.Row="6" Background="White" BorderBrush="{StaticResource MediumGrayBrush}" BorderThickness="0,1,0,0" Padding="8">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <!-- Attach button -->
+                <Button Grid.Column="0" Content="📎" Command="{Binding AttachFileCommand}"
+                        ToolTip="Lampirkan Gambar Teknik atau PDF (JPG, PNG, WebP, PDF)"
+                        Style="{StaticResource SecondaryButtonStyle}"
+                        Width="32" Height="32" Padding="0" Margin="0,0,6,0" />
+
+                <!-- Native WinForms Edit Host: True Win32 HWND bypasses SOLIDWORKS accelerator stealing completely! -->
+                <Border Grid.Column="1" BorderBrush="#CCCCCC" BorderThickness="1" CornerRadius="4" Background="White" MinHeight="36" MaxHeight="80" Padding="4,2">
+                    <Grid>
+                        <wfi:WindowsFormsHost x:Name="InputHost" Margin="0" Background="White">
+                            <wfctrl:WinFormsChatTextBox x:Name="ChatBox" />
+                        </wfi:WindowsFormsHost>
+                        <TextBlock x:Name="PlaceholderTextBlock"
+                                   Text="Tulis perintah CAD di sini... (Enter untuk kirim, Shift+Enter untuk baris baru)"
+                                   Foreground="#999999"
+                                   FontSize="11"
+                                   IsHitTestVisible="False"
+                                   VerticalAlignment="Center"
+                                   Margin="4,0,0,0" />
+                    </Grid>
+                </Border>
+
+                <!-- Send Button -->
+                <Button Grid.Column="2" Content="Kirim"
+                        Command="{Binding SendMessageCommand}"
+                        Style="{StaticResource PrimaryButtonStyle}"
+                        Height="32" Margin="6,0,0,0" Padding="12,0" />
+            </Grid>
+        </Border>
+
+    </Grid>
+</UserControl>
+

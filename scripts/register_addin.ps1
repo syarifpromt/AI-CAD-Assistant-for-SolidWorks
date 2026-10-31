@@ -13,10 +13,17 @@ $guid = "{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}"
 $title = "AI CAD Assistant"
 $desc = "AI CAD Assistant untuk SOLIDWORKS menggunakan Gemini AI"
 
-# 0. Periksa hak Administrator
+# 0. Periksa hak Administrator dan status SOLIDWORKS
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
     Write-Error "Registrasi SOLIDWORKS Add-In memerlukan hak Administrator untuk menulis ke 'HKLM:\SOFTWARE\SolidWorks\AddIns'. Harap buka PowerShell dengan opsi 'Run as Administrator'."
+    exit 1
+}
+
+$swProcesses = Get-Process -Name "SLDWORKS" -ErrorAction SilentlyContinue
+if ($swProcesses) {
+    Write-Warning "SOLIDWORKS sedang berjalan (PID: $($swProcesses.Id -join ', '))."
+    Write-Warning "Mohon tutup SOLIDWORKS terlebih dahulu sebelum melakukan registrasi COM."
     exit 1
 }
 
@@ -27,18 +34,8 @@ $regAsmPath = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\RegAsm.exe"
 
 # 1. Periksa ketersediaan assembly hasil build
 if (-not (Test-Path $dllPath)) {
-    Write-Host "[INFO] Assembly belum dibangun. Menjalankan build..." -ForegroundColor Yellow
-    $buildScript = Join-Path $scriptDir "build.ps1"
-    if (Test-Path $buildScript) {
-        & $buildScript -Configuration $Configuration
-        if ($LASTEXITCODE -ne 0 -or -not (Test-Path $dllPath)) {
-            Write-Error "Gagal membangun assembly Add-in di: $dllPath"
-            exit 1
-        }
-    } else {
-        Write-Error "Script build tidak ditemukan di: $buildScript"
-        exit 1
-    }
+    Write-Error "Assembly Add-in tidak ditemukan di: $dllPath. Harap bangun solusi terlebih dahulu sebelum mendaftar."
+    exit 1
 }
 
 # 2. Periksa ketersediaan RegAsm 64-bit
@@ -97,19 +94,21 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "Menulis konfigurasi registri resmi SOLIDWORKS Add-in..." -ForegroundColor Cyan
 
 # 5a. HKLM AddIns (Wajib: lokasi penemuan add-in untuk dialog Tools -> Add-Ins SOLIDWORKS)
+# Selaras dengan contoh resmi SOLIDWORKS: HKLM AddIns default DWORD = 0
 try {
     $hklmAddIns = "HKLM:\SOFTWARE\SolidWorks\AddIns\$guid"
     if (-not (Test-Path $hklmAddIns)) { New-Item -Path $hklmAddIns -Force | Out-Null }
-    Set-ItemProperty -Path $hklmAddIns -Name "(Default)" -Value 1 -Type DWord
+    Set-ItemProperty -Path $hklmAddIns -Name "(Default)" -Value 0 -Type DWord
     Set-ItemProperty -Path $hklmAddIns -Name "Title" -Value $title -Type String
     Set-ItemProperty -Path $hklmAddIns -Name "Description" -Value $desc -Type String
-    Write-Host "[OK] Terdaftar di HKLM:\SOFTWARE\SolidWorks\AddIns\$guid (Title, Description, Default=1)" -ForegroundColor Green
+    Write-Host "[OK] Terdaftar di HKLM:\SOFTWARE\SolidWorks\AddIns\$guid (Title, Description, Default=0)" -ForegroundColor Green
 } catch {
     Write-Error "Gagal menulis kunci registri HKLM: $_"
     exit 1
 }
 
 # 5b. HKCU AddInsStartup (Wajib: memuat add-in saat startup untuk user saat ini)
+# Selaras dengan contoh resmi SOLIDWORKS: HKCU AddInsStartup default DWORD = 1
 try {
     $hkcuStartup = "HKCU:\Software\SolidWorks\AddInsStartup\$guid"
     if (-not (Test-Path $hkcuStartup)) { New-Item -Path $hkcuStartup -Force | Out-Null }
@@ -131,22 +130,80 @@ try {
     # Non-fatal jika pembersihan legacy gagal
 }
 
-# 6. Verifikasi integritas nilai registri
-$hklmProps = Get-ItemProperty -Path "HKLM:\SOFTWARE\SolidWorks\AddIns\$guid" -ErrorAction SilentlyContinue
-$hkcuProps = Get-ItemProperty -Path "HKCU:\Software\SolidWorks\AddInsStartup\$guid" -ErrorAction SilentlyContinue
-
+# 6. Verifikasi integritas nilai registri dan COM CLSID
+Write-Host "`nMemverifikasi integritas registri COM dan SOLIDWORKS Add-in..." -ForegroundColor Cyan
 $verificationPassed = $true
-if (-not $hklmProps -or $hklmProps.Title -ne $title -or $hklmProps.Description -ne $desc) {
-    Write-Error "Verifikasi HKLM gagal: Title atau Description tidak cocok."
+
+# 6a. Verifikasi HKLM AddIns
+$hklmProps = Get-ItemProperty -Path "HKLM:\SOFTWARE\SolidWorks\AddIns\$guid" -ErrorAction SilentlyContinue
+if (-not $hklmProps) {
+    Write-Error "Verifikasi HKLM gagal: Kunci registri HKLM:\SOFTWARE\SolidWorks\AddIns\$guid tidak ditemukan."
+    $verificationPassed = $false
+} else {
+    if ($hklmProps.'(Default)' -ne 0) {
+        Write-Error "Verifikasi HKLM AddIns gagal: Nilai Default bukan 0 (ditemukan: $($hklmProps.'(Default)'))."
+        $verificationPassed = $false
+    }
+    if ($hklmProps.Title -ne $title) {
+        Write-Error "Verifikasi HKLM AddIns gagal: Title tidak cocok (diharapkan: '$title', ditemukan: '$($hklmProps.Title)')."
+        $verificationPassed = $false
+    }
+    if ($hklmProps.Description -ne $desc) {
+        Write-Error "Verifikasi HKLM AddIns gagal: Description tidak cocok."
+        $verificationPassed = $false
+    }
+}
+
+# 6b. Verifikasi HKCU AddInsStartup
+$hkcuProps = Get-ItemProperty -Path "HKCU:\Software\SolidWorks\AddInsStartup\$guid" -ErrorAction SilentlyContinue
+if (-not $hkcuProps) {
+    Write-Error "Verifikasi HKCU Startup gagal: Kunci registri HKCU:\Software\SolidWorks\AddInsStartup\$guid tidak ditemukan."
+    $verificationPassed = $false
+} elseif ($hkcuProps.'(Default)' -ne 1) {
+    Write-Error "Verifikasi HKCU Startup gagal: Nilai Default bukan 1 (ditemukan: $($hkcuProps.'(Default)'))."
     $verificationPassed = $false
 }
 
-if (-not $hkcuProps -or $hkcuProps.'(Default)' -ne 1) {
-    Write-Error "Verifikasi HKCU Startup gagal: Nilai Default bukan 1."
+# 6c. Verifikasi COM CLSID & InprocServer32
+$clsidPath = "HKLM:\SOFTWARE\Classes\CLSID\$guid\InprocServer32"
+if (-not (Test-Path $clsidPath)) {
+    $clsidPath = "HKCR:\CLSID\$guid\InprocServer32"
+}
+
+if (-not (Test-Path $clsidPath)) {
+    Write-Error "Verifikasi COM CLSID gagal: Kunci InprocServer32 tidak ditemukan untuk CLSID $guid."
     $verificationPassed = $false
+} else {
+    $inprocProps = Get-ItemProperty -Path $clsidPath -ErrorAction SilentlyContinue
+    $expectedVer = [System.Reflection.AssemblyName]::GetAssemblyName($dllPath).Version.ToString()
+
+    # Verifikasi Assembly Identity memuat versi yang benar
+    if (-not $inprocProps.Assembly -or $inprocProps.Assembly -notlike "*Version=$expectedVer*") {
+        Write-Error "Verifikasi Assembly Identity gagal: Assembly registri ($($inprocProps.Assembly)) tidak memuat versi $expectedVer."
+        $verificationPassed = $false
+    } else {
+        Write-Host "  [OK] Assembly Identity cocok: $($inprocProps.Assembly)" -ForegroundColor Green
+    }
+
+    # Verifikasi CodeBase menunjuk tepat ke AddIn DLL hasil build
+    if (-not $inprocProps.CodeBase) {
+        Write-Error "Verifikasi CodeBase gagal: Properti CodeBase kosong pada $clsidPath."
+        $verificationPassed = $false
+    } else {
+        $rawCodeBase = $inprocProps.CodeBase
+        $normalizedCodeBase = [System.Uri]::UnescapeDataString($rawCodeBase).Replace("file:///", "").Replace("/", "\")
+        $expectedDllPath = (Resolve-Path $dllPath).Path
+        if ($normalizedCodeBase -ne $expectedDllPath) {
+            Write-Error "Verifikasi CodeBase gagal: CodeBase ($normalizedCodeBase) tidak menunjuk tepat ke file build ($expectedDllPath)."
+            $verificationPassed = $false
+        } else {
+            Write-Host "  [OK] CodeBase menunjuk tepat ke: $expectedDllPath" -ForegroundColor Green
+        }
+    }
 }
 
 if (-not $verificationPassed) {
+    Write-Error "Registrasi Add-in GAGAL pada tahap verifikasi integritas."
     exit 1
 }
 
@@ -156,7 +213,7 @@ Write-Host "Detail Registrasi:" -ForegroundColor Cyan
 Write-Host "  - GUID:        $guid"
 Write-Host "  - Title:       $title"
 Write-Host "  - Description: $desc"
-Write-Host "  - Discovery:   HKLM:\SOFTWARE\SolidWorks\AddIns\$guid"
-Write-Host "  - Startup:     HKCU:\Software\SolidWorks\AddInsStartup\$guid"
+Write-Host "  - Discovery:   HKLM:\SOFTWARE\SolidWorks\AddIns\$guid (Default=0)"
+Write-Host "  - Startup:     HKCU:\Software\SolidWorks\AddInsStartup\$guid (Default=1)"
 Write-Host ""
 Write-Host "Silakan buka SOLIDWORKS 2025 -> Tools -> Add-Ins untuk memverifikasi." -ForegroundColor Cyan

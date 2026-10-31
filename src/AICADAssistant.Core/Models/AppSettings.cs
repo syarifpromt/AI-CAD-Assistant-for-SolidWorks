@@ -9,7 +9,8 @@ namespace AICADAssistant.Core.Models
     /// </summary>
     public class AppSettings
     {
-        public const string DefaultGeminiModel = "gemini-3.8-flash";
+        public const string DefaultGeminiModel = "gemini-3.5-flash-lite";
+        public const string FallbackGeminiModel = "gemini-3.8-flash";
 
         private static readonly string SettingsDirectory =
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AICADAssistant");
@@ -33,12 +34,33 @@ namespace AICADAssistant.Core.Models
             DefaultUnit = "mm";
             OutputDirectory = "";
             MaxRetryAttempts = 2;
-            RequestTimeoutSeconds = 90;
+            RequestTimeoutSeconds = 120;
             ShowConfirmationDialogs = true;
             LogLevel = "Info";
         }
 
         // ── Static helpers ───────────────────────────────────────────────────────
+
+        public void Sanitize()
+        {
+            if (string.IsNullOrWhiteSpace(GeminiModel) ||
+                GeminiModel == "gemini-1.5-pro" ||
+                GeminiModel == "gemini-1.5-flash" ||
+                GeminiModel == "gemini-2.0-flash")
+            {
+                GeminiModel = DefaultGeminiModel;
+            }
+
+            if (RequestTimeoutSeconds < 30 || RequestTimeoutSeconds > 300)
+            {
+                RequestTimeoutSeconds = 120;
+            }
+
+            if (MaxRetryAttempts < 0 || MaxRetryAttempts > 3)
+            {
+                MaxRetryAttempts = 2;
+            }
+        }
 
         /// <summary>
         /// Loads settings from %APPDATA%\AICADAssistant\settings.json.
@@ -60,13 +82,19 @@ namespace AICADAssistant.Core.Models
                 if (loaded == null)
                     return new AppSettings();
 
-                // If loaded model is empty or obsolete, default to verified model
-                if (string.IsNullOrWhiteSpace(loaded.GeminiModel) ||
-                    loaded.GeminiModel == "gemini-1.5-pro" ||
-                    loaded.GeminiModel == "gemini-1.5-flash" ||
-                    loaded.GeminiModel == "gemini-2.0-flash")
+                int prevTimeout = loaded.RequestTimeoutSeconds;
+                int prevRetries = loaded.MaxRetryAttempts;
+                string prevModel = loaded.GeminiModel;
+
+                loaded.Sanitize();
+
+                bool needsResave = (prevTimeout != loaded.RequestTimeoutSeconds ||
+                                    prevRetries != loaded.MaxRetryAttempts ||
+                                    !string.Equals(prevModel, loaded.GeminiModel, StringComparison.Ordinal));
+
+                if (needsResave)
                 {
-                    loaded.GeminiModel = DefaultGeminiModel;
+                    loaded.Save();
                 }
 
                 return loaded;

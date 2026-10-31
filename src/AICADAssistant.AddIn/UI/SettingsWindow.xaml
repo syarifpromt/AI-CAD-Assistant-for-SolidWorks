@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
         Title="Pengaturan AI CAD Assistant"
-        Height="540" Width="480"
+        Height="420" Width="480"
         WindowStartupLocation="CenterScreen"
         ResizeMode="NoResize"
         Background="#F5F5F5"
@@ -71,8 +71,7 @@
 
                         <StackPanel Orientation="Horizontal">
                             <Button Content="Simpan API Key" Style="{StaticResource PrimaryButtonStyle}" Click="OnSaveApiKeyClicked" Margin="0,0,8,0" />
-                            <Button Content="Hapus Key" Style="{StaticResource SecondaryButtonStyle}" Command="{Binding DeleteApiKeyCommand}" Margin="0,0,8,0" />
-                            <Button Content="Uji Koneksi" Style="{StaticResource SecondaryButtonStyle}" Command="{Binding TestConnectionCommand}" />
+                            <Button Content="Hapus Key" Style="{StaticResource SecondaryButtonStyle}" Command="{Binding DeleteApiKeyCommand}" />
                         </StackPanel>
                     </StackPanel>
                 </GroupBox>
@@ -97,12 +96,10 @@
                     </Grid>
                 </GroupBox>
 
-                <!-- Storage & Performance Section -->
-                <GroupBox Header="Penyimpanan &amp; Kinerja" FontWeight="SemiBold">
+                <!-- Storage Section -->
+                <GroupBox Header="Penyimpanan Berkas" FontWeight="SemiBold">
                     <Grid Margin="10">
                         <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
                         <Grid.ColumnDefinitions>
@@ -111,15 +108,9 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
 
-                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Folder Output:" FontWeight="Normal" VerticalAlignment="Center" Margin="0,0,0,8" />
-                        <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding OutputDirectory}" Margin="0,0,8,8" Height="26" />
-                        <Button Grid.Row="0" Grid.Column="2" Content="..." Command="{Binding BrowseDirectoryCommand}" Style="{StaticResource SecondaryButtonStyle}" Margin="0,0,0,8" Width="30" />
-
-                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Batas Waktu (detik):" FontWeight="Normal" VerticalAlignment="Center" Margin="0,0,0,8" />
-                        <TextBox Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Text="{Binding RequestTimeoutSeconds}" Margin="0,0,0,8" Height="26" />
-
-                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Maksimal Percobaan:" FontWeight="Normal" VerticalAlignment="Center" />
-                        <TextBox Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Text="{Binding MaxRetryAttempts}" Height="26" />
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Folder Output:" FontWeight="Normal" VerticalAlignment="Center" />
+                        <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding OutputDirectory}" Margin="0,0,8,0" Height="26" />
+                        <Button Grid.Row="0" Grid.Column="2" Content="..." Command="{Binding BrowseDirectoryCommand}" Style="{StaticResource SecondaryButtonStyle}" Width="30" />
                     </Grid>
                 </GroupBox>
 
